@@ -1,4 +1,4 @@
-const CACHE_NAME='mcb-cache-v3-nuked-1000000000';
+const CACHE_NAME='mcb-cache-v3-nuked-1000000000_v20260126';
 const CACHE="mcb-cache-mcb-build-20260124-1705";
 const ASSETS = [
   "./",
@@ -9,7 +9,8 @@ const ASSETS = [
   "./logo.png",
   "./icon-192.png",
   "./icon-512.png"
-];
+
+  'app_v20260126.js?v=20260126',];
 self.addEventListener("install", (e)=>{
   e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)));
   self.skipWaiting();
