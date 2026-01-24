@@ -1,6 +1,6 @@
 
 
-const BUILD_ID = "mcb-build-20260124-1140";
+const BUILD_ID = "mcb-build-20260124-1230";
 
 try{
   const prev = localStorage.getItem("mcb_build_id") || "";
@@ -3168,7 +3168,7 @@ function openProjectForm(p=null){
   }
 
   const isEdit = !!p;
-  const data = p || { id: uid(), name:"", address:"", clientName:"", clientPhone:"", notes:"", lat:null, lng:null, stage:"Active Build" };
+  const data = p || { id: uid(), name:"", address:"", clientName:"", clientPhone:"", notes:"", lat:null, lng:null, stage:"Active Build", gdriveDocs:"", gdrivePhotos:"" };
   showModal(`
     <div class="row space">
       <h2>${isEdit ? "Edit Project" : "New Project"}</h2>
@@ -3192,6 +3192,14 @@ function openProjectForm(p=null){
         <input class="input" id="p_clientPhone" value="${escapeHtml(data.clientPhone||"")}" placeholder="Optional" />
       </div>
     </div>
+
+    <hr/>
+    <h3 style="margin-top:0">Google Drive</h3>
+    <label>Docs link (folder or file)</label>
+    <input class="input" id="p_gdriveDocs" value="${escapeHtml(data.gdriveDocs||"")}" placeholder="Paste Google Drive link for project docs" />
+    <label>Photos link (folder)</label>
+    <input class="input" id="p_gdrivePhotos" value="${escapeHtml(data.gdrivePhotos||"")}" placeholder="Paste Google Drive link for site photos" />
+
     <label>Notes</label>
     <textarea class="input" id="p_notes" placeholder="Access, hazards, gate code, etc.">${escapeHtml(data.notes||"")}</textarea>
     <hr/>
@@ -3221,6 +3229,8 @@ function openProjectForm(p=null){
     data.address = $("#p_address").value.trim();
     data.clientName = $("#p_clientName").value.trim();
     data.clientPhone = $("#p_clientPhone").value.trim();
+    data.gdriveDocs = ($("#p_gdriveDocs")?.value || "").trim();
+    data.gdrivePhotos = ($("#p_gdrivePhotos")?.value || "").trim();
     data.notes = $("#p_notes").value.trim();
     data.updatedAt = new Date().toISOString();
     if(!data.name) alert("Project name required.");
@@ -3473,6 +3483,13 @@ function projectOverview(p){
         <h2>Contacts</h2>
         <div class="kv"><div class="k">Client</div><div class="v">${escapeHtml(p.clientName||"—")}</div></div>
         <div class="kv"><div class="k">Phone</div><div class="v">${p.clientPhone ? `<a href="tel:${escapeHtml(p.clientPhone)}">${escapeHtml(p.clientPhone)}</a>` : "—"}</div></div>
+        
+        ${ (p.gdriveDocs||p.gdrivePhotos) ? `
+        <div class="row" style="gap:10px; margin-top:10px">
+          ${p.gdriveDocs ? `<button class="btn" id="projDocsBtn" type="button">Docs</button>` : ``}
+          ${p.gdrivePhotos ? `<button class="btn" id="projPhotosBtn" type="button">Photos</button>` : ``}
+        </div>` : ``}
+
         <hr/>
         <h2>Notes</h2>
         <div class="sub">${escapeHtml(p.notes||"—")}</div>
@@ -3516,6 +3533,16 @@ function bindProjectTabEvents(p, tab){
     $("#quickTask").onclick = ()=> openTaskForm({ projectId:p.id });
     $("#quickDiary").onclick = ()=> openDiaryForm({ projectId:p.id });
     $("#quickVar").onclick = ()=> openVariationForm({ projectId:p.id });
+
+    const _openLink = (u)=>{
+      const url = String(u||"").trim();
+      if(!url) return;
+      const finalUrl = /^https?:\/\//i.test(url) ? url : ("https://" + url);
+      try{ window.open(finalUrl, "_blank"); }catch(e){ location.href = finalUrl; }
+    };
+    $("#projDocsBtn") && ($("#projDocsBtn").onclick = ()=> _openLink(p.gdriveDocs));
+    $("#projPhotosBtn") && ($("#projPhotosBtn").onclick = ()=> _openLink(p.gdrivePhotos));
+
 
     // Equipment assign/remove on project overview
     $$("#tabContent [data-assign-equipment]").forEach(b=> b.onclick = ()=>{
