@@ -6398,8 +6398,7 @@ if(btnTest) btnTest.onclick = async ()=>{
     if(badge) badge.textContent = "Test…";
     const res = await fetch(url, { method: "GET", redirect:"follow", credentials:"omit", cache:"no-store" });
     const txt = await res.text();
-    alert("GET " + res.status + "
-" + txt.slice(0, 500));
+    alert("GET " + res.status + "\n" + txt.slice(0, 500));
   }catch(e){
     alert("Test failed: " + (e && e.message ? e.message : String(e)));
   }finally{
