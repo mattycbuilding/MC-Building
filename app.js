@@ -2172,6 +2172,29 @@ function bindWorkerSettingsUI(){
   };
   if(add) add.onclick = ()=> openWorkerEditModal({ id:"", name:"", pin:"", isAdmin:false, perms:_defaultPermsAll() });
   _renderWorkerList();
+
+// Global delegation for Worker Management buttons (prevents missing onclick wiring after re-renders)
+(function(){
+  if(window.__WM_DELEGATE__) return;
+  window.__WM_DELEGATE__ = true;
+  document.addEventListener('click', function(ev){
+    try{
+      const addBtn = ev.target && ev.target.closest ? ev.target.closest('#wm_add') : null;
+      if(addBtn){
+        ev.preventDefault();
+        openWorkerEditModal({ id:"", name:"", pin:"", isAdmin:false, perms:_defaultPermsAll() });
+        return;
+      }
+      const switchBtn = ev.target && ev.target.closest ? ev.target.closest('#wm_switch') : null;
+      if(switchBtn){
+        ev.preventDefault();
+        openWorkerPicker({ title: "Switch worker" });
+        return;
+      }
+    }catch(e){}
+  }, true);
+})();
+
 }
 
 
