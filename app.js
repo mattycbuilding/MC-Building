@@ -960,7 +960,7 @@ const defaultSettings = () => ({
   // Google Sheets Sync (multi-device)
   sync: {
     enabled: false,
-    url: "https://script.google.com/macros/s/AKfycbx7QQEDK9J8o2Ei6HSKQ4PRmEMZobXXW97_Oef4EPuz5ZV5smDHHiAuHHQI2PsAwAzslA/exec",
+    url: "https://script.google.com/macros/s/AKfycbzjnFoxE9FfRpGh4QNAZrr8vcnVPix-X7--YHlLcWFllryEgbDiaLq_LE3_Vje3_a6h_g/exec",
     apiSecret: "MCB Data",
     deviceId: "",
     lastVersion: 0,
@@ -1224,7 +1224,7 @@ let __syncTimer = null;
 let __syncSuspend = false;
 
 function syncEnabled(){
-  return !!(settings && settings.sync && settings.sync.enabled && window.SYNC_SERVER_URL_HARDCODED && window.SYNC_SECRET_HARDCODED);
+  return !!(settings && settings.sync && settings.sync.enabled && window.MCB_SYNC_URL && window.MCB_SYNC_SECRET);
 }
 
 function setSyncStatus(text){
@@ -1373,11 +1373,11 @@ async function syncPush(){
   try{
     const payload = {
       action: "push",
-      apiSecret: window.SYNC_SECRET_HARDCODED,
+      apiSecret: window.MCB_SYNC_SECRET,
       deviceId: settings.sync.deviceId,
       data: buildPushPayload()
     };
-    const out = await fetchJSON(window.SYNC_SERVER_URL_HARDCODED, payload);
+    const out = await fetchJSON(window.MCB_SYNC_URL, payload);
     settings.sync.lastVersion = out.version || settings.sync.lastVersion || 0;
     settings.sync.lastPushAt = nowISO();
     settings.sync.lastSyncAt = settings.sync.lastPushAt;
@@ -1396,11 +1396,11 @@ async function syncPull(){
   try{
     const payload = {
       action: "pull",
-      apiSecret: window.SYNC_SECRET_HARDCODED,
+      apiSecret: window.MCB_SYNC_SECRET,
       deviceId: settings.sync.deviceId,
       sinceVersion: Number(settings.sync.lastVersion || 0)
     };
-    const out = await fetchJSON(window.SYNC_SERVER_URL_HARDCODED, payload);
+    const out = await fetchJSON(window.MCB_SYNC_URL, payload);
 
     __syncSuspend = true;
     try{
@@ -6369,8 +6369,8 @@ function bindGoogleSheetsSyncSettingsUI(){
   const saveSyncSettings = ()=>{
     settings.sync = settings.sync || defaultSettings().sync;
     settings.sync.enabled = !!(enabledEl && enabledEl.checked);
-    window.SYNC_SERVER_URL_HARDCODED = (urlEl ? urlEl.value.trim() : window.SYNC_SERVER_URL_HARDCODED || "").trim();
-    window.SYNC_SECRET_HARDCODED = (secretEl ? secretEl.value : window.SYNC_SECRET_HARDCODED || "").trim();
+    window.MCB_SYNC_URL = (urlEl ? urlEl.value.trim() : window.MCB_SYNC_URL || "").trim();
+    window.MCB_SYNC_SECRET = (secretEl ? secretEl.value : window.MCB_SYNC_SECRET || "").trim();
     settings.sync.autoIntervalSec = Math.max(15, Number(intervalEl ? intervalEl.value : settings.sync.autoIntervalSec || 60) || 60);
 
     // ensure device id exists
@@ -6426,11 +6426,13 @@ function bindGoogleSheetsSyncSettingsUI(){
 const btnTest = document.getElementById("sync_test");
 if(btnTest) btnTest.onclick = async ()=>{
   saveSyncSettings();
-  const url = (settings.sync && window.SYNC_SERVER_URL_HARDCODED) ? window.SYNC_SERVER_URL_HARDCODED.trim() : "";
-  if(!url) return alert("Set Web App URL first.");
+  const url = (settings.sync && window.MCB_SYNC_URL) ? window.MCB_SYNC_URL.trim() : "";
+  if(!url) url = (window.MCB_SYNC_URL||"");
+  if(!url) return alert("Sync URL missing (hardcoded)");
   try{
     if(badge) badge.textContent = "Test…";
-    const res = await fetch(url, { method: "GET", redirect:"follow", credentials:"omit", cache:"no-store" });
+    const pingUrl = url + (url.includes('?') ? '&' : '?') + 'action=ping&secret=' + encodeURIComponent(window.MCB_SYNC_SECRET||'');
+    const res = await fetch(pingUrl, { method: "GET", redirect:"follow", credentials:"omit", cache:"no-store" });
     const txt = await res.text();
     alert("GET " + res.status + "\n" + txt.slice(0, 500));
   }catch(e){
@@ -8483,7 +8485,7 @@ function initNavMenu(){
 
 async function syncPing() {
   try {
-    const res = await fetch(window.SYNC_SERVER_URL + '?action=ping');
+    const res = await fetch(window.MCB_SYNC_URL + '?action=ping&secret=' + encodeURIComponent(window.MCB_SYNC_SECRET||''));
     const data = await res.json();
     alert('SYNC OK: ' + JSON.stringify(data));
   } catch (err) {
@@ -8493,7 +8495,7 @@ async function syncPing() {
 
 /* =====================
    MCB CLEAN SHEETS SYNC (v1)
-   - Uses Settings -> Sync URL + API Secret (window.SYNC_SERVER_URL_HARDCODED / window.SYNC_SECRET_HARDCODED)
+   - Uses Settings -> Sync URL + API Secret (window.MCB_SYNC_URL / window.MCB_SYNC_SECRET)
    - Calls Apps Script actions: ping, listtabs, readtab, writetab
    - Hooks buttons: sync_test, sync_now, sync_push, sync_pull
    ===================== */
@@ -8503,7 +8505,7 @@ async function syncPing() {
   window.SYNC_SERVER_URL_DEFAULT = 'https://script.google.com/macros/s/AKfycbzjnFoxE9FfRpGh4QNAZrr8vcnVPix-X7--YHlLcWFllryEgbDiaLq_LE3_Vje3_a6h_g/exec';
 
   function _syncCfg() {
-    return { url: (window.SYNC_SERVER_URL_HARDCODED||'').trim(), secret: (window.SYNC_SECRET_HARDCODED||'').trim(), deviceId: (localStorage.getItem('mcbDeviceId')||localStorage.getItem('deviceId')||'device') };
+    return { url: (window.MCB_SYNC_URL||'').trim(), secret: (window.MCB_SYNC_SECRET||'').trim(), deviceId: (localStorage.getItem('mcbDeviceId')||localStorage.getItem('deviceId')||'device') };
   }
 
   function _q(params) {
@@ -8710,5 +8712,35 @@ async function syncPing() {
 
 
 // ==== Hardcoded Sync Config (UI removed) ====
-window.SYNC_SERVER_URL_HARDCODED = 'https://script.google.com/macros/s/AKfycbzjnFoxE9FfRpGh4QNAZrr8vcnVPix-X7--YHlLcWFllryEgbDiaLq_LE3_Vje3_a6h_g/exec';
-window.SYNC_SECRET_HARDCODED = 'MCB-SYNC-2026-9F3K7Q2P';
+window.MCB_SYNC_URL = 'https://script.google.com/macros/s/AKfycbzjnFoxE9FfRpGh4QNAZrr8vcnVPix-X7--YHlLcWFllryEgbDiaLq_LE3_Vje3_a6h_g/exec';
+window.MCB_SYNC_SECRET = 'MCB-SYNC-2026-9F3K7Q2P';
+
+
+// ==== MCB Hardcoded Sync Config ====
+window.MCB_SYNC_URL = 'https://script.google.com/macros/s/AKfycbzjnFoxE9FfRpGh4QNAZrr8vcnVPix-X7--YHlLcWFllryEgbDiaLq_LE3_Vje3_a6h_g/exec';
+window.MCB_SYNC_SECRET = 'MCB-SYNC-2026-9F3K7Q2P';
+
+
+// ==== MCB Sync Helper (single source) ====
+function mcbSyncBuildUrl(action, params={}) {
+  const base = (window.MCB_SYNC_URL||'').trim();
+  if(!base) throw new Error('Sync URL missing');
+  const usp = new URLSearchParams();
+  usp.set('action', action);
+  usp.set('secret', (window.MCB_SYNC_SECRET||'').trim());
+  for (const k of Object.keys(params||{})) {
+    if(params[k]===undefined || params[k]===null) continue;
+    usp.set(k, String(params[k]));
+  }
+  return base + (base.includes('?') ? '&' : '?') + usp.toString();
+}
+
+async function mcbSyncPing() {
+  const url = mcbSyncBuildUrl('ping');
+  const res = await fetch(url, { method:'GET', cache:'no-store', credentials:'omit', redirect:'follow' });
+  const txt = await res.text();
+  let data; try{ data=JSON.parse(txt); }catch(e){ data={ok:false,error:'Non-JSON',raw:txt}; }
+  if(!data.ok) throw new Error(data.error||'Ping failed');
+  return data;
+}
+
