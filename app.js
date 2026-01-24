@@ -8481,7 +8481,7 @@ function initNavMenu(){
 }
 
 
-window.SYNC_SERVER_URL = 'https://script.google.com/macros/s/AKfycbxt8FHGAGBmtA3eYnRTeEBfKil4_0OLB_FGY4XMFsuAtgqIRhnDYd1OOUkM2s4hVjge/exec';
+window.SYNC_SERVER_URL = 'https://script.google.com/macros/s/AKfycbzjnFoxE9FfRpGh4QNAZrr8vcnVPix-X7--YHlLcWFllryEgbDiaLq_LE3_Vje3_a6h_g/exec';
 
 
 async function syncPing() {
@@ -8494,58 +8494,16 @@ async function syncPing() {
   }
 }
 
+window.SYNC_SECRET = 'MCB-SYNC-2026-9F3K7Q2P';
+
 
 async function testSyncConnection() {
   try {
-    const res = await fetch(window.SYNC_SERVER_URL + '?action=ping');
+    const url = window.SYNC_SERVER_URL + '?action=ping&secret=' + encodeURIComponent(window.SYNC_SECRET);
+    const res = await fetch(url);
     const data = await res.json();
-    alert('SYNC OK: ' + JSON.stringify(data));
+    alert('SYNC TEST RESULT: ' + JSON.stringify(data));
   } catch (err) {
     alert('SYNC ERROR: ' + err.message);
   }
-}
-
-async function exportAllIndexedDB() {
-  const state = await dbGet('state');
-  if (!state) return alert('No state data to export');
-
-  const tabs = Object.keys(state);
-
-  for (const tab of tabs) {
-    const rows = (state[tab] || []).map(item => ({
-      id: item.id || crypto.randomUUID(),
-      projectId: item.projectId || '',
-      data: JSON.stringify(item),
-      updatedAt: item.updatedAt || new Date().toISOString(),
-      deviceId: localStorage.getItem('deviceId') || 'device',
-      deleted: item.deleted || false,
-      rev: item.rev || 1
-    }));
-
-    await fetch(window.SYNC_SERVER_URL + '?action=writetab&tab=' + tab, {
-      method: 'POST',
-      body: JSON.stringify(rows)
-    });
-  }
-
-  alert('Export complete');
-}
-
-async function importAllSheets() {
-  const tabsRes = await fetch(window.SYNC_SERVER_URL + '?action=listtabs');
-  const tabsData = await tabsRes.json();
-  if (!tabsData.ok) return alert('Failed to list tabs');
-
-  const newState = {};
-
-  for (const tab of tabsData.tabs) {
-    const res = await fetch(window.SYNC_SERVER_URL + '?action=readtab&tab=' + tab);
-    const data = await res.json();
-    if (data.ok) {
-      newState[tab] = data.rows.map(r => JSON.parse(r.data || '{}'));
-    }
-  }
-
-  await dbSet('state', newState);
-  alert('Import complete');
 }
