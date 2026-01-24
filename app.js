@@ -1,6 +1,6 @@
 
 
-const BUILD_ID = "mcb-build-20260124-1610";
+const BUILD_ID = "mcb-build-20260124-1705";
 
 try{
   const prev = localStorage.getItem("mcb_build_id") || "";
@@ -1190,6 +1190,7 @@ const SYNC_TABLES = {
   deliveries: "deliveries",
   inspections: "inspections",
   subbies: "subbies",
+  workers: "workers",
   activityLog: "activityLog",
 
   // H&S mapping (app uses hsHazards/hsIncidents)
@@ -1662,6 +1663,7 @@ function routeToModule(path){
   if(path==="hs") return "hs";
   if(path==="equipment") return "equipment";
   if(path==="fleet") return "fleet";
+  if(path==="workers") return "settings";
   if(path==="settings") return "settings";
   return path;
 }
@@ -3203,6 +3205,7 @@ function render(){
   if(path === "hs") return renderHSPage(app, params);
     if(path === "equipment") return renderEquipmentPage(app, params);
   if(path === "fleet") return renderFleetPage(app, params);
+if(path === "workers") return renderWorkerManagement(app, params);
 if(path === "settings") return renderSettings(app, params);
   renderDeletedProjectsUI();
   // fallback
@@ -3385,6 +3388,9 @@ function renderProjects(app){
 
   // Export/Import buttons live on this page
   try{ bindImportExportButtons(); }catch(e){}
+
+  const ow = document.getElementById("openWorkerMgmt");
+  if(ow) ow.onclick = ()=> navTo("workers");
 
   const renderProjectsList = (arr)=>{
     const el = $("#projectList");
@@ -6040,6 +6046,105 @@ const total = Object.values(lines).reduce((s,v)=> s + (v.amount||0), 0);
 }
 
 // ----------------- Settings -----------------
+
+function renderWorkerManagement(app){
+  setHeader("Workers");
+  ensureWorkerSettings();
+
+  const w = currentWorker();
+  const activeName = w ? w.name : "—";
+  const activeRole = w ? (w.isAdmin ? "Admin" : "Worker") : "—";
+
+  app.innerHTML = `
+    <div class="card" style="margin-top:12px">
+      <div class="row space" style="align-items:center; gap:10px">
+        <div>
+          <h2 style="margin:0">Worker Management</h2>
+          <div class="sub">Manage profiles, PINs and permissions. This replaces the Worker section that used to live in Settings.</div>
+        </div>
+        <button class="btn" id="wm_switch" type="button">Switch worker</button>
+      </div>
+
+      <div class="row" style="gap:12px; flex-wrap:wrap; margin-top:12px">
+        <div class="badge">Active: <b>${escapeHtml(activeName)}</b> • ${escapeHtml(activeRole)}</div>
+        <div class="badge">Blocked users cannot sign in</div>
+      </div>
+
+      <div class="row" style="gap:10px; flex-wrap:wrap; margin-top:12px">
+        <label class="row" style="gap:8px; align-items:center">
+          <input type="checkbox" id="wm_enabled" ${settings.workerMode?.enabled ? "checked":""} />
+          <span>Worker mode</span>
+        </label>
+        <label class="row" style="gap:8px; align-items:center">
+          <input type="checkbox" id="wm_requirePin" ${settings.workerMode?.requirePin ? "checked":""} />
+          <span>Require PIN (if set)</span>
+        </label>
+      </div>
+
+      <div class="smallmuted" style="margin-top:8px">
+        Tip: keep an Admin profile so you can always access Settings. If Worker mode is on, access is enforced everywhere.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row space" style="align-items:center; gap:10px">
+        <div>
+          <div class="h">Profiles</div>
+          <div class="sub">Tap a profile to edit permissions, PIN, blocks, and project tab access.</div>
+        </div>
+        <button class="btn" id="wm_add" type="button">Add worker</button>
+      </div>
+      <div class="list" id="wm_list" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <div class="h">Upgrades</div>
+      <div class="sub">Quick actions for safety and audit control.</div>
+      <div class="row" style="gap:10px; flex-wrap:wrap; margin-top:10px">
+        <button class="btn danger" id="wm_block_all" type="button">Block all non-admins</button>
+        <button class="btn" id="wm_unblock_all" type="button">Unblock all</button>
+      </div>
+      <div class="smallmuted" style="margin-top:8px">
+        Blocking all non-admins is useful if a tablet is lost or you need to lock access fast.
+      </div>
+    </div>
+  `;
+
+  const sw = document.getElementById("wm_switch");
+  if(sw) sw.onclick = ()=> openWorkerPicker({ title: "Switch worker" });
+
+  try{ bindWorkerSettingsUI(); }catch(e){}
+
+  const ba = document.getElementById("wm_block_all");
+  if(ba) ba.onclick = ()=>{
+    if(!confirm("Block ALL non-admin profiles?")) return;
+    settings.workers = (settings.workers||[]).map(x=>{
+      if(!x) return x;
+      if(x.isAdmin) return x;
+      return { ...x, blocked:true, updatedAt: nowISO() };
+    });
+    saveSettings(settings);
+    ensureWorkerSettings();
+    try{ _renderWorkerList(); }catch(e){}
+    alert("All non-admins blocked.");
+  };
+
+  const ua = document.getElementById("wm_unblock_all");
+  if(ua) ua.onclick = ()=>{
+    if(!confirm("Unblock ALL profiles?")) return;
+    settings.workers = (settings.workers||[]).map(x=>{
+      if(!x) return x;
+      return { ...x, blocked:false, updatedAt: nowISO() };
+    });
+    saveSettings(settings);
+    ensureWorkerSettings();
+    try{ _renderWorkerList(); }catch(e){}
+    alert("All profiles unblocked.");
+  };
+
+  try{ _renderWorkerList(); }catch(e){}
+}
+
 function renderSettings(app){
   setHeader("Settings");
   updateAppUpdateStamp();
@@ -6128,21 +6233,13 @@ function renderSettings(app){
         <hr/>
         <button class="btn danger" id="wipeBtn" type="button">Wipe all data</button>
       </div>
-
       <div class="card">
-        <h2>Worker profiles</h2>
-        <div class="sub">Enable Worker mode to restrict what each profile can access and which forms they can edit.</div>
-
+        <h2>Workers</h2>
+        <div class="sub">Manage worker profiles, PINs and access restrictions.</div>
         <div class="row" style="gap:10px; flex-wrap:wrap; margin-top:10px">
-          <label class="row" style="gap:8px; align-items:center">
-            <input type="checkbox" id="wm_enabled" ${settings.workerMode?.enabled ? "checked":""} />
-            <span>Worker mode</span>
-          </label>
-          <label class="row" style="gap:8px; align-items:center">
-            <input type="checkbox" id="wm_requirePin" ${settings.workerMode?.requirePin ? "checked":""} />
-            <span>Require PIN (if set)</span>
-          </label>
+          <button class="btn" id="openWorkerMgmt" type="button">Open Worker Management</button>
         </div>
+      </div>
 
         <div class="row space" style="margin-top:12px">
           <div class="h">Profiles</div>
