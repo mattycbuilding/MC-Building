@@ -1,6 +1,6 @@
 
 
-const BUILD_ID = "mcb-build-20260124-1335";
+const BUILD_ID = "mcb-build-20260124-1445";
 
 try{
   const prev = localStorage.getItem("mcb_build_id") || "";
@@ -957,6 +957,18 @@ const defaultSettings = () => ({
   labourRate: 90, // NZD/hr default - editable
   currency: "NZD",
 
+  // Google Sheets Sync (multi-device)
+  sync: {
+    enabled: false,
+    url: "https://script.google.com/macros/s/AKfycbx7QQEDK9J8o2Ei6HSKQ4PRmEMZobXXW97_Oef4EPuz5ZV5smDHHiAuHHQI2PsAwAzslA/exec",
+    apiSecret: "MCB Data",
+    deviceId: "",
+    lastVersion: 0,
+    lastPushAt: "",
+    lastSyncAt: "",
+    autoIntervalSec: 60
+  },
+
   // Worker Profiles / Worker Mode
   workerMode: {
     enabled: false,
@@ -1119,6 +1131,7 @@ function saveState(s){
   saveStateToLocalStorage(next);
   __pendingState = next;
   schedulePersist();
+  try{ onLocalMutation(); }catch(e){}
 }
 function loadSettings(){
   const local = loadSettingsFromLocalStorage();
@@ -1129,6 +1142,8 @@ function saveSettings(s){
   saveSettingsToLocalStorage(next);
   __pendingSettings = next;
   schedulePersist();
+  try{ onLocalMutation(); }catch(e){}
+  try{ scheduleAutoSync(); }catch(e){}
 }
 
 async function initStorageHydrate(){
@@ -1158,6 +1173,276 @@ async function initStorageHydrate(){
     // fallback: already booted from localStorage
   }
 }
+
+
+/* =============================
+   Google Sheets Sync (v1)
+   - Optional multi-device sync using Apps Script Web App
+   - Offline-first: local IndexedDB remains primary; sync merges by updatedAt
+============================= */
+
+const SYNC_TABLES = {
+  projects: "projects",
+  tasks: "tasks",
+  diary: "diary",
+  equipment: "equipment",
+  variations: "variations",
+  deliveries: "deliveries",
+  inspections: "inspections",
+  subbies: "subbies",
+  activityLog: "activityLog",
+
+  // H&S mapping (app uses hsHazards/hsIncidents)
+  hazards: "hsHazards",
+  incidents: "hsIncidents",
+
+  // Extra tables present in the app (script can accept dynamic sheets)
+  leads: "leads",
+  programmeTasks: "programmeTasks",
+  programmeHistoryStats: "programmeHistoryStats",
+  equipmentLogs: "equipmentLogs",
+  fleet: "fleet",
+  fleetLogs: "fleetLogs",
+  hsProfiles: "hsProfiles",
+  hsInductions: "hsInductions",
+  hsToolboxes: "hsToolboxes"
+};
+
+function ensureSyncDeviceId(){
+  try{
+    if(!settings.sync) settings.sync = defaultSettings().sync;
+    if(!settings.sync.deviceId){
+      settings.sync.deviceId = "dev_" + uid();
+      saveSettings(settings);
+    }
+  }catch(e){}
+}
+
+let __syncBusy = false;
+let __syncTimer = null;
+let __syncSuspend = false;
+
+function syncEnabled(){
+  return !!(settings && settings.sync && settings.sync.enabled && settings.sync.url && settings.sync.apiSecret);
+}
+
+function setSyncStatus(text){
+  try{
+    const el = document.getElementById("syncStatusBadge");
+    if(el) el.textContent = text;
+  }catch(e){}
+}
+
+async function fetchJSON(url, body){
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const t = await res.text();
+  let data = null;
+  try{ data = JSON.parse(t); }catch(e){ throw new Error("Bad JSON from sync server"); }
+  if(!data || data.ok !== true){
+    throw new Error((data && data.error) ? data.error : "Sync failed");
+  }
+  return data;
+}
+
+function recordEnvelope(rec){
+  const r = normaliseRecord(rec);
+  return {
+    id: r.id,
+    updatedAt: r.updatedAt || nowISO(),
+    json: JSON.stringify(r)
+  };
+}
+
+function getLocalTable(appKey){
+  if(appKey === "workers"){
+    // workers live in settings
+    return Array.isArray(settings.workers) ? settings.workers : [];
+  }
+  const arr = state[appKey];
+  return Array.isArray(arr) ? arr : [];
+}
+
+function setLocalTable(appKey, arr){
+  if(appKey === "workers"){
+    settings.workers = Array.isArray(arr) ? arr : [];
+    saveSettings(settings);
+    return;
+  }
+  state[appKey] = Array.isArray(arr) ? arr : [];
+  saveState(state);
+}
+
+function mergeByUpdatedAt(localArr, incomingArr){
+  const map = new Map();
+  (localArr||[]).forEach(r=>{ if(r && r.id) map.set(String(r.id), r); });
+
+  (incomingArr||[]).forEach(row=>{
+    if(!row) return;
+    let rec = null;
+    try{
+      rec = row.json ? JSON.parse(row.json) : null;
+    }catch(e){
+      rec = null;
+    }
+    if(!rec || !rec.id) return;
+
+    const id = String(rec.id);
+    const local = map.get(id);
+    const remoteUpdated = (rec.updatedAt || row.updatedAt || "").toString();
+    const localUpdated = (local && local.updatedAt ? local.updatedAt : "").toString();
+
+    // newest wins (ISO strings sort lexicographically)
+    if(!local || remoteUpdated >= localUpdated){
+      // ensure lifecycle fields
+      if(!rec.updatedAt) rec.updatedAt = row.updatedAt || nowISO();
+      if(!rec.createdAt) rec.createdAt = rec.updatedAt;
+      map.set(id, rec);
+    }
+  });
+
+  return Array.from(map.values()).filter(Boolean).map(normaliseRecord);
+}
+
+function buildPushPayload(){
+  const since = settings.sync.lastPushAt ? settings.sync.lastPushAt : "";
+  const data = {};
+
+  Object.keys(SYNC_TABLES).forEach(sheetName=>{
+    const appKey = SYNC_TABLES[sheetName];
+    const localArr = getLocalTable(appKey);
+
+    const filtered = since
+      ? localArr.filter(r => (r && (r.updatedAt||"") > since))
+      : localArr;
+
+    data[sheetName] = filtered.map(recordEnvelope);
+  });
+
+  // Settings as a single record (keeps global app prefs aligned across devices)
+  const safeSettings = { ...settings };
+  // Never sync secrets/endpoint outward from server back to clients — each device stores its own.
+  safeSettings.sync = { ...settings.sync, apiSecret: "MCB Data", url: "" };
+
+  data.settings = [{
+    id: "global",
+    updatedAt: nowISO(),
+    json: JSON.stringify({ settings: safeSettings })
+  }];
+
+  return data;
+}
+
+async function syncPush(){
+  if(!syncEnabled() || __syncBusy) return { ok:false, skipped:true };
+  __syncBusy = true;
+  setSyncStatus("Syncing…");
+  try{
+    const payload = {
+      action: "push",
+      apiSecret: settings.sync.apiSecret,
+      deviceId: settings.sync.deviceId,
+      data: buildPushPayload()
+    };
+    const out = await fetchJSON(settings.sync.url, payload);
+    settings.sync.lastVersion = out.version || settings.sync.lastVersion || 0;
+    settings.sync.lastPushAt = nowISO();
+    settings.sync.lastSyncAt = settings.sync.lastPushAt;
+    saveSettings(settings);
+    setSyncStatus("Synced");
+    return out;
+  }finally{
+    __syncBusy = false;
+  }
+}
+
+async function syncPull(){
+  if(!syncEnabled() || __syncBusy) return { ok:false, skipped:true };
+  __syncBusy = true;
+  setSyncStatus("Syncing…");
+  try{
+    const payload = {
+      action: "pull",
+      apiSecret: settings.sync.apiSecret,
+      deviceId: settings.sync.deviceId,
+      sinceVersion: Number(settings.sync.lastVersion || 0)
+    };
+    const out = await fetchJSON(settings.sync.url, payload);
+
+    __syncSuspend = true;
+    try{
+      const data = out.data || {};
+
+      // Merge tables
+      Object.keys(SYNC_TABLES).forEach(sheetName=>{
+        const appKey = SYNC_TABLES[sheetName];
+        const incoming = Array.isArray(data[sheetName]) ? data[sheetName] : [];
+        if(!incoming.length) return;
+        const merged = mergeByUpdatedAt(getLocalTable(appKey), incoming);
+        setLocalTable(appKey, merged);
+      });
+
+      // Merge settings (do not overwrite this device's sync credentials)
+      if(Array.isArray(data.settings) && data.settings.length){
+        const row = data.settings[0];
+        try{
+          const obj = row && row.json ? JSON.parse(row.json) : null;
+          if(obj && obj.settings){
+            const keepSync = { ...settings.sync };
+            settings = { ...defaultSettings(), ...obj.settings, sync: keepSync };
+            saveSettings(settings);
+          }
+        }catch(e){}
+      }
+
+      settings.sync.lastVersion = out.version || settings.sync.lastVersion || 0;
+      settings.sync.lastSyncAt = nowISO();
+      saveSettings(settings);
+
+    }finally{
+      __syncSuspend = false;
+    }
+
+    setSyncStatus("Synced");
+    return out;
+  }finally{
+    __syncBusy = false;
+  }
+}
+
+async function syncNow(){
+  if(!syncEnabled()) return;
+  if(!navigator.onLine){
+    setSyncStatus("Offline");
+    return;
+  }
+  // Pull first, then push local changes
+  await syncPull();
+  await syncPush();
+}
+
+function scheduleAutoSync(){
+  if(__syncTimer) clearInterval(__syncTimer);
+  __syncTimer = null;
+  if(!syncEnabled()) return;
+  const sec = Math.max(15, Number(settings.sync.autoIntervalSec || 60));
+  __syncTimer = setInterval(()=>{ syncNow(); }, sec*1000);
+}
+
+function onLocalMutation(){
+  if(__syncSuspend) return;
+  if(!syncEnabled()) return;
+  if(__syncBusy) return;
+  // Debounce quick bursts of edits
+  if(window.__mcbSyncDebounce) clearTimeout(window.__mcbSyncDebounce);
+  window.__mcbSyncDebounce = setTimeout(()=>{ syncPush(); }, 1200);
+}
+
+// Hook online event
+window.addEventListener("online", ()=>{ if(syncEnabled()) syncNow(); });
 
 let state = loadState();
 
@@ -1201,6 +1486,8 @@ function applyStateMigrations(){
 applyStateMigrations();
 
 let settings = loadSettings();
+ensureSyncDeviceId();
+scheduleAutoSync();
 
 
 /* =============================
@@ -5743,10 +6030,36 @@ function renderSettings(app){
 
     <div class="grid two">
       <div class="card">
-        <div class="h">Google Sync</div>
-        <button id="settingsSyncBtn" type="button" class="btn primary" style="width:100%;margin-top:8px">Sync now</button>
-        <button id="settingsDownloadOnlyBtn" type="button" class="btn" style="width:100%;margin-top:8px">Download only</button>
-        <div id="settingsSyncStatus" class="small" style="margin-top:8px;opacity:.8">Last synced: Never</div>
+  <div class="row space" style="align-items:center; gap:10px">
+    <div>
+      <div class="h">Google Sheets Sync</div>
+      <div class="sub">Keep all devices matched. Offline-first; sync runs when online.</div>
+    </div>
+    <span class="badge" id="syncStatusBadge">—</span>
+  </div>
+
+  <label class="row" style="gap:8px; align-items:center; margin-top:10px">
+    <input type="checkbox" id="sync_enabled" ${settings.sync?.enabled ? "checked":""} />
+    <span>Enable sync</span>
+  </label>
+
+  <label style="margin-top:10px">Web App URL</label>
+  <input id="sync_url" class="input" value="${escapeHtml(settings.sync?.url || "https://script.google.com/macros/s/AKfycbx7QQEDK9J8o2Ei6HSKQ4PRmEMZobXXW97_Oef4EPuz5ZV5smDHHiAuHHQI2PsAwAzslA/exec")}" />
+
+  <label style="margin-top:10px">API Secret</label>
+  <input id="sync_secret" class="input" value="${escapeHtml(settings.sync?.apiSecret || "MCB Data")}" />
+
+  <label style="margin-top:10px">Auto sync interval (seconds)</label>
+  <input id="sync_interval" class="input" type="number" min="15" step="1" value="${escapeHtml(String(settings.sync?.autoIntervalSec || 60))}" />
+
+  <div class="row" style="gap:10px; flex-wrap:wrap; margin-top:12px">
+    <button id="sync_now" type="button" class="btn primary">Sync now</button>
+    <button id="sync_pull" type="button" class="btn">Download only</button>
+    <button id="sync_push" type="button" class="btn">Upload only</button>
+  </div>
+
+  <div id="settingsSyncStatus" class="small" style="margin-top:10px;opacity:.8">Last synced: —</div>
+</div>
       </div>
 
       <div class="card">
@@ -5810,13 +6123,9 @@ function renderSettings(app){
 </div>
   `;
 
-  // Google Sync (Settings)
-  if(document.getElementById("settingsSyncBtn")){
-    document.getElementById("settingsSyncStatus").textContent = "Last synced: " + formatLastSync();
-    document.getElementById("settingsSyncBtn").onclick = syncNowSettings;
-    const dlBtn = document.getElementById("settingsDownloadOnlyBtn");
-    if(dlBtn) dlBtn.onclick = downloadOnlySettings;
-  }
+  // Google Sheets Sync (Settings)
+  try{ bindGoogleSheetsSyncSettingsUI(); }catch(e){}
+
   $("#saveSettings").onclick = ()=>{
     settings.theme = $("#set_theme").value;
     settings.companyName = $("#set_company").value.trim() || "Matty Campbell Building";
@@ -5849,6 +6158,92 @@ function renderSettings(app){
   if(_bfu) _bfu.onclick = ()=>forceRefreshApp();
   const _bcu = document.getElementById("btnCheckUpdate");
   if(_bcu) _bcu.onclick = async ()=>{ await checkForUpdate(); alert("Checked for update. If one is available, reload the app."); };
+}
+
+
+
+function bindGoogleSheetsSyncSettingsUI(){
+  const statusEl = document.getElementById("settingsSyncStatus");
+  const badge = document.getElementById("syncStatusBadge");
+
+  // hydrate fields with defaults if blank
+  const urlEl = document.getElementById("sync_url");
+  const secretEl = document.getElementById("sync_secret");
+  const enabledEl = document.getElementById("sync_enabled");
+  const intervalEl = document.getElementById("sync_interval");
+
+  if(urlEl && !urlEl.value) urlEl.value = settings.sync?.url || "";
+  if(secretEl && !secretEl.value) secretEl.value = settings.sync?.apiSecret || "";
+
+  function refreshStatus(){
+    const last = (settings.sync && settings.sync.lastSyncAt) ? settings.sync.lastSyncAt : "";
+    const txt = last ? new Date(last).toLocaleString() : "Never";
+    if(statusEl) statusEl.textContent = "Last synced: " + txt;
+    if(badge){
+      if(!syncEnabled()) badge.textContent = "Off";
+      else if(!navigator.onLine) badge.textContent = "Offline";
+      else badge.textContent = "On";
+    }
+  }
+
+  refreshStatus();
+
+  const saveSyncSettings = ()=>{
+    settings.sync = settings.sync || defaultSettings().sync;
+    settings.sync.enabled = !!(enabledEl && enabledEl.checked);
+    settings.sync.url = (urlEl ? urlEl.value.trim() : settings.sync.url || "").trim();
+    settings.sync.apiSecret = (secretEl ? secretEl.value : settings.sync.apiSecret || "").trim();
+    settings.sync.autoIntervalSec = Math.max(15, Number(intervalEl ? intervalEl.value : settings.sync.autoIntervalSec || 60) || 60);
+
+    // ensure device id exists
+    ensureSyncDeviceId();
+    saveSettings(settings);
+    scheduleAutoSync();
+    refreshStatus();
+  };
+
+  if(enabledEl) enabledEl.onchange = saveSyncSettings;
+  if(urlEl) urlEl.onchange = saveSyncSettings;
+  if(secretEl) secretEl.onchange = saveSyncSettings;
+  if(intervalEl) intervalEl.onchange = saveSyncSettings;
+
+  const btnNow = document.getElementById("sync_now");
+  const btnPull = document.getElementById("sync_pull");
+  const btnPush = document.getElementById("sync_push");
+
+  if(btnNow) btnNow.onclick = async ()=>{
+    saveSyncSettings();
+    try{
+      if(badge) badge.textContent = "Sync…";
+      await syncNow();
+    }catch(e){
+      alert("Sync failed: " + (e && e.message ? e.message : "Unknown error"));
+    }finally{
+      refreshStatus();
+    }
+  };
+  if(btnPull) btnPull.onclick = async ()=>{
+    saveSyncSettings();
+    try{
+      if(badge) badge.textContent = "Sync…";
+      await syncPull();
+    }catch(e){
+      alert("Download failed: " + (e && e.message ? e.message : "Unknown error"));
+    }finally{
+      refreshStatus();
+    }
+  };
+  if(btnPush) btnPush.onclick = async ()=>{
+    saveSyncSettings();
+    try{
+      if(badge) badge.textContent = "Sync…";
+      await syncPush();
+    }catch(e){
+      alert("Upload failed: " + (e && e.message ? e.message : "Unknown error"));
+    }finally{
+      refreshStatus();
+    }
+  };
 }
 
 
@@ -5897,68 +6292,6 @@ function loadDemo(){
 }
 
 
-/* ===== SETTINGS SYNC V2 ===== */
-const SYNC_URL = "https://script.google.com/macros/s/AKfycbxv124HyhBW30KW9lCkrj1zs6O2v-o-vx-vX7mkuzmIfP-ZkakalSRXrfTNOXvteMlhxQ/exec";
-const SYNC_KEY = "IsabellaHopeCampbell";
-function getLastSync(){ return localStorage.getItem("mcb_lastSync") || ""; }
-function setLastSync(v){ localStorage.setItem("mcb_lastSync", v || new Date().toISOString()); }
-function formatLastSync(){ const v=getLastSync(); if(!v) return "Never"; const d=new Date(v); return isNaN(d)? "Never" : d.toLocaleString(); }
-
-async function syncNowSettings(){
-  const btn = document.getElementById("settingsSyncBtn");
-  const status = document.getElementById("settingsSyncStatus");
-  try {
-    if(btn) btn.disabled = true;
-    if(btn) btn.textContent = "Syncing…";
-    if(status) status.textContent = "Syncing…";
-
-    await fetch(SYNC_URL, {
-      method:"POST",
-      body:JSON.stringify({
-        key: SYNC_KEY,
-        action:"push",
-        changes:{
-          Projects:state.projects||[],
-          Tasks:state.tasks||[],
-          Diary:state.diary||[],
-          Deliveries:state.deliveries||[],
-          Inspections:state.inspections||[],
-          Variations:state.variations||[],
-          Subbies:state.subbies||[]
-        }
-      })
-    });
-
-    const pull = await fetch(SYNC_URL, {
-      method:"POST",
-      body:JSON.stringify({
-        key: SYNC_KEY,
-        action:"pull",
-        lastSync:getLastSync()
-      })
-    }).then(async r=>{ const t = await r.text(); try { return JSON.parse(t);} catch(e){ throw new Error("Non-JSON response: "+t.slice(0,200)); } });
-
-    if(pull?.data){
-      if(pull.data.Projects) state.projects = mergeById(state.projects, pull.data.Projects);
-      if(pull.data.Tasks) state.tasks = mergeById(state.tasks, pull.data.Tasks);
-      if(pull.data.Diary) state.diary = mergeById(state.diary, pull.data.Diary);
-      if(pull.data.Deliveries) state.deliveries = mergeById(state.deliveries, pull.data.Deliveries);
-      if(pull.data.Inspections) state.inspections = mergeById(state.inspections, pull.data.Inspections);
-      if(pull.data.Variations) state.variations = mergeById(state.variations, pull.data.Variations);
-      if(pull.data.Subbies) state.subbies = mergeById(state.subbies, pull.data.Subbies);
-      await saveState(state);
-    }
-    setLastSync(pull?.serverTime || new Date().toISOString());
-  } catch(e) {
-    console.error(e);
-    alert("Sync failed. Check your Apps Script deployment access (Anyone) and try again.");
-  } finally {
-    if(btn) btn.disabled = false;
-    if(btn) btn.textContent = "Sync now";
-    if(status) status.textContent = "Last synced: " + formatLastSync();
-  }
-}
-/* ===== END SETTINGS SYNC V2 ===== */
 
 
 // ===== SAFE MERGE (prevents data loss) =====
@@ -6650,56 +6983,6 @@ function runHnryDiaryExportSimple(projectId, from, to){
 }
 
 
-async function downloadOnlySettings(){
-  const btn = document.getElementById("settingsDownloadOnlyBtn");
-  const status = document.getElementById("settingsSyncStatus");
-  try{
-    if(btn) btn.disabled = true;
-    if(status) status.textContent = "Downloading…";
-
-    const resp = await fetch(SYNC_URL, {
-      method:"POST",
-      headers: {"Content-Type":"text/plain;charset=utf-8"},
-      body: JSON.stringify({ key: SYNC_KEY, action:"pull",
-        lastSync:null,
-        full:true })
-    });
-
-    const text = await resp.text();
-    let json;
-    try{ json = JSON.parse(text); }
-    catch(e){ throw new Error("Non-JSON response: " + text.slice(0,200)); }
-    if(json.error) throw new Error(json.error);
-
-    const data = json.data || json.payload || json;
-    const pick = (name)=> data?.[name] ?? data?.[name.toLowerCase()] ?? data?.[name.toUpperCase()] ?? null;
-
-    let updated = 0;
-    const p = pick("Projects"); if(Array.isArray(p)){ state.projects = p; updated++; }
-    const t = pick("Tasks"); if(Array.isArray(t)){ state.tasks = t; updated++; }
-    const d = pick("Diary"); if(Array.isArray(d)){ state.diary = d; updated++; }
-    const del = pick("Deliveries"); if(Array.isArray(del)){ state.deliveries = del; updated++; }
-    const ins = pick("Inspections"); if(Array.isArray(ins)){ state.inspections = ins; updated++; }
-    const v = pick("Variations"); if(Array.isArray(v)){ state.variations = v; updated++; }
-    const s = pick("Subbies"); if(Array.isArray(s)){ state.subbies = s; updated++; }
-
-    if(updated === 0){
-      const keys = data ? Object.keys(data).slice(0,60).join(", ") : "(no data object)";
-      throw new Error("Pull returned no tables. Keys: " + keys);
-    }
-
-    await saveState(state);
-    setLastSync(json.serverTime || data.serverTime || new Date().toISOString());
-    alert("Download complete ("+updated+" tables). Reloading…");
-    setTimeout(()=>location.reload(), 120);
-  }catch(err){
-    console.error(err);
-    alert("Download failed: " + (err && err.message ? err.message : err));
-  }finally{
-    if(btn) btn.disabled = false;
-    if(status) status.textContent = "Last synced: " + formatLastSync();
-  }
-}
 function toastSuccess(msg){ toast(msg); }
 function toastError(msg){ toast(msg); }
 function getProgrammeTasksForProject(projectId){ return programmeTasksForProject(projectId); }
