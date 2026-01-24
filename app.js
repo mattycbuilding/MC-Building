@@ -6159,7 +6159,18 @@ function renderWorkerManagement(app){
     alert("All profiles unblocked.");
   };
 
-  try{ _renderWorkerList(); }catch(e){}
+  // Bind UI handlers (add/edit/list + toggles). Without this, the Add button won't work
+  // when viewing the dedicated Workers screen.
+  try{
+    bindWorkerSettingsUI();
+  }catch(e){
+    // Fallback: at least wire the Add button.
+    try{
+      const add = document.getElementById("wm_add");
+      if(add) add.onclick = ()=> openWorkerEditModal({ id:"", name:"", pin:"", isAdmin:false, perms:_defaultPermsAll() });
+    }catch(_e){}
+    try{ _renderWorkerList(); }catch(_e){}
+  }
 }
 
 function renderSettings(app){
