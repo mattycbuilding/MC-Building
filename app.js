@@ -961,7 +961,7 @@ const defaultSettings = () => ({
   sync: {
     enabled: false,
     url: "https://script.google.com/macros/s/AKfycbzjnFoxE9FfRpGh4QNAZrr8vcnVPix-X7--YHlLcWFllryEgbDiaLq_LE3_Vje3_a6h_g/exec",
-    apiSecret: "MCB Data",
+    apiSecret: "MCB-SYNC-2026-9F3K7Q2P",
     deviceId: "",
     lastVersion: 0,
     lastPushAt: "",
@@ -1355,7 +1355,7 @@ function buildPushPayload(){
   // Settings as a single record (keeps global app prefs aligned across devices)
   const safeSettings = { ...settings };
   // Never sync secrets/endpoint outward from server back to clients — each device stores its own.
-  safeSettings.sync = { ...settings.sync, apiSecret: "MCB Data", url: "" };
+  safeSettings.sync = { ...settings.sync, apiSecret: "MCB-SYNC-2026-9F3K7Q2P", url: "" };
 
   data.settings = [{
     id: "global",
@@ -8744,3 +8744,6 @@ async function mcbSyncPing() {
   return data;
 }
 
+
+// ==== Force sync secret hardcoded to avoid mismatch
+try{window.MCB_SYNC_SECRET = 'MCB-SYNC-2026-9F3K7Q2P';}catch(e){}
