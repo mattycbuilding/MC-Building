@@ -1,6 +1,6 @@
 
 
-const BUILD_ID = "mcb-build-20260124-1305";
+const BUILD_ID = "mcb-build-20260124-1335";
 
 try{
   const prev = localStorage.getItem("mcb_build_id") || "";
@@ -2080,6 +2080,24 @@ async function geocodeAddress(address){
 
 // Helpers
 function projectById(id){ return state.projects.find(p=>p.id===id); }
+
+// Open stored Google Drive links from forms (project select may change inside modal)
+function openProjectLinkById(projectId, kind){
+  const p = projectById(projectId);
+  const url = kind === "docs" ? (p?.gdriveDocs||"") : (p?.gdrivePhotos||"");
+  if(!url){
+    alert(kind === "docs" ? "No Google Drive Docs link set for this project." : "No Google Drive Photos link set for this project.");
+    return;
+  }
+  try{ window.open(url, "_blank", "noopener"); }
+  catch(e){ location.href = url; }
+}
+
+function openProjectLinkFromSelect(selectId, kind){
+  const pid = document.getElementById(selectId)?.value || "";
+  if(!pid){ alert("Project required."); return; }
+  openProjectLinkById(pid, kind);
+}
 function subbieById(id){ return state.subbies.find(s=>s.id===id); }
 
 // =========================
@@ -4258,6 +4276,9 @@ function openTaskForm(seed={}){
       Photos taken
     </label>
     <div class="small" style="opacity:.8">Store photos externally (not uploaded in-app).</div>
+    <div class="row" style="gap:10px;margin-top:8px">
+      <button class="btn" id="t_openPhotos" type="button">Open project photos</button>
+    </div>
 <hr/>
     <div class="row space actionsSticky">
       <button class="btn primary" id="saveT" type="button">${isEdit ? "Save" : "Create"}</button>
@@ -4267,6 +4288,7 @@ function openTaskForm(seed={}){
   `);
   $("#closeM").onclick = closeModal;
   $("#cancelT").onclick = closeModal;
+  $("#t_openPhotos") && ($("#t_openPhotos").onclick = ()=> openProjectLinkFromSelect("t_project", "photos"));
 
   $("#saveT").onclick = async ()=>{
     const __btn = $("#saveT");
@@ -4619,6 +4641,9 @@ function openDiaryForm(seed={}){
       Photos taken
     </label>
     <div class="small" style="opacity:.8">Store photos externally (not uploaded in-app).</div>
+    <div class="row" style="gap:10px;margin-top:8px">
+      <button class="btn" id="d_openPhotos" type="button">Open project photos</button>
+    </div>
 <hr/>
     <div class="row space actionsSticky">
       <button class="btn primary" id="saveD" type="button">${isEdit ? "Save" : "Create"}</button>
@@ -4628,6 +4653,7 @@ function openDiaryForm(seed={}){
   `);
   $("#closeM").onclick = closeModal;
   $("#cancelD").onclick = closeModal;
+  $("#d_openPhotos") && ($("#d_openPhotos").onclick = ()=> openProjectLinkFromSelect("d_project", "photos"));
 
   $("#saveD").onclick = async ()=>{
     const __btn = $("#saveD");
@@ -5055,6 +5081,9 @@ function openInspectionForm(seed={}){
         <span>Photos taken</span>
       </label>
       <div class="sub">Tick if photos were taken on site (syncs via photosJson).</div>
+      <div class="row" style="gap:10px;margin-top:8px">
+        <button class="btn" id="i_openPhotos" type="button">Open project photos</button>
+      </div>
     </div>
     <label>Photos</label>
     <input id="i_photos" class="input" type="hidden" accept="image/*" multiple />
@@ -5068,6 +5097,7 @@ function openInspectionForm(seed={}){
   `);
   $("#closeM").onclick = closeModal;
   $("#cancelI").onclick = closeModal;
+  $("#i_openPhotos") && ($("#i_openPhotos").onclick = ()=> openProjectLinkFromSelect("i_project", "photos"));
 
   $("#saveI").onclick = async ()=>{
     const __btn = $("#saveI");
