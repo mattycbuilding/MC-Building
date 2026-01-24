@@ -1,6 +1,6 @@
 
 
-const BUILD_ID = "mcb-build-20260124-1230";
+const BUILD_ID = "mcb-build-20260124-1305";
 
 try{
   const prev = localStorage.getItem("mcb_build_id") || "";
@@ -3327,8 +3327,10 @@ if(!allowedKeys.has(tab)){
           <h2>${escapeHtml(p.name)}</h2>
           <div class="sub">${escapeHtml(p.address || "")}</div>
         </div>
-        <div class="row noPrint">
+        <div class="row noPrint" style="gap:10px; flex-wrap:wrap">
           <button class="btn" id="driveBtn" type="button">Drive (Waze)</button>
+          ${p.gdriveDocs ? `<button class="btn" id="projDocsTopBtn" type="button">Docs</button>` : ``}
+          ${p.gdrivePhotos ? `<button class="btn" id="projPhotosTopBtn" type="button">Photos</button>` : ``}
           <button class="btn" id="editProjBtn" type="button">Edit</button>
         </div>
       </div>
@@ -3542,6 +3544,8 @@ function bindProjectTabEvents(p, tab){
     };
     $("#projDocsBtn") && ($("#projDocsBtn").onclick = ()=> _openLink(p.gdriveDocs));
     $("#projPhotosBtn") && ($("#projPhotosBtn").onclick = ()=> _openLink(p.gdrivePhotos));
+    $("#projDocsTopBtn") && ($("#projDocsTopBtn").onclick = ()=> _openLink(p.gdriveDocs));
+    $("#projPhotosTopBtn") && ($("#projPhotosTopBtn").onclick = ()=> _openLink(p.gdrivePhotos));
 
 
     // Equipment assign/remove on project overview
