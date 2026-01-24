@@ -1,6 +1,6 @@
 
 
-const BUILD_ID = "mcb-build-20260124-1540";
+const BUILD_ID = "mcb-build-20260124-1610";
 
 try{
   const prev = localStorage.getItem("mcb_build_id") || "";
@@ -1234,11 +1234,21 @@ function setSyncStatus(text){
 }
 
 async function fetchJSON(url, body){
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
+  // IMPORTANT (Apps Script + browser CORS):
+  // Content-Type: application/json triggers an OPTIONS preflight.
+  // Apps Script Web Apps don't respond to OPTIONS, causing "Failed to fetch".
+  // Send JSON as text/plain to avoid preflight.
+  let res;
+  try{
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(body)
+    });
+  }catch(err){
+    // Network errors / blocked requests (often CORS/preflight)
+    throw new Error("Failed to fetch sync server. Check Web App deploy access (Anyone) and that you're online.");
+  }
   const t = await res.text();
   let data = null;
   try{ data = JSON.parse(t); }catch(e){ throw new Error("Bad JSON from sync server"); }
