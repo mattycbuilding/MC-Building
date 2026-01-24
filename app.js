@@ -1,6 +1,6 @@
 
 
-const BUILD_ID = "mcb-build-20260124-1445";
+const BUILD_ID = "mcb-build-20260124-1540";
 
 try{
   const prev = localStorage.getItem("mcb_build_id") || "";
@@ -2163,15 +2163,41 @@ initStorageHydrate().then(()=>{
 });
 
 // Service worker
+// iOS PWAs can hold onto old caches aggressively. Use ?nosw=1 to force-unregister
+// the service worker + clear caches, then reload the page without the flag.
 const __NO_SW__ = new URLSearchParams(location.search).has("nosw");
+
+async function __clearAllCachesAndSW__(){
+  try{
+    if('serviceWorker' in navigator){
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r=>r.unregister()));
+    }
+  }catch(e){}
+  try{
+    if('caches' in window){
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k=>caches.delete(k)));
+    }
+  }catch(e){}
+}
+
 if("serviceWorker" in navigator){
   window.addEventListener("load", async ()=>{
+    if(__NO_SW__){
+      await __clearAllCachesAndSW__();
+      // reload without the nosw flag so the app can register the fresh SW
+      const u = new URL(location.href);
+      u.searchParams.delete('nosw');
+      location.replace(u.toString());
+      return;
+    }
+
     try{ await navigator.serviceWorker.register("./sw.js"); }catch(e){}
     try{
       const lu = document.getElementById('lastUpdateStamp');
       if(lu) lu.textContent = getLastUpdateStamp();
     }catch(e){}
-
   });
 }
 
