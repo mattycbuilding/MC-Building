@@ -1,6 +1,6 @@
 
 
-const BUILD_ID = "mcb-build-20260124-1705";
+const BUILD_ID = "mcb-build-20260124-1835";
 
 try{
   const prev = localStorage.getItem("mcb_build_id") || "";
@@ -1239,20 +1239,39 @@ async function fetchJSON(url, body){
   // Content-Type: application/json triggers an OPTIONS preflight.
   // Apps Script Web Apps don't respond to OPTIONS, causing "Failed to fetch".
   // Send JSON as text/plain to avoid preflight.
-  let res;
+  let res, text;
   try{
     res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      redirect: "follow",
+      credentials: "omit",
+      cache: "no-store"
     });
   }catch(err){
-    // Network errors / blocked requests (often CORS/preflight)
-    throw new Error("Failed to fetch sync server. Check Web App deploy access (Anyone) and that you're online.");
+    throw new Error("Failed to fetch sync server (network/CORS). Check: (1) Web App access is Anyone, (2) correct URL, (3) you're online.");
   }
-  const t = await res.text();
+
+  try{
+    text = await res.text();
+  }catch(e){
+    text = "";
+  }
+
+  if(!res.ok){
+    const snippet = (text || "").slice(0, 220);
+    throw new Error(`Sync server HTTP ${res.status}. ${snippet || "No response body."}`);
+  }
+
   let data = null;
-  try{ data = JSON.parse(t); }catch(e){ throw new Error("Bad JSON from sync server"); }
+  try{
+    data = text ? JSON.parse(text) : null;
+  }catch(e){
+    const snippet = (text || "").slice(0, 220);
+    throw new Error("Bad JSON from sync server. Response starts: " + snippet);
+  }
+
   if(!data || data.ok !== true){
     throw new Error((data && data.error) ? data.error : "Sync failed");
   }
@@ -6113,8 +6132,6 @@ function renderWorkerManagement(app){
   const sw = document.getElementById("wm_switch");
   if(sw) sw.onclick = ()=> openWorkerPicker({ title: "Switch worker" });
 
-  try{ bindWorkerSettingsUI(); }catch(e){}
-
   const ba = document.getElementById("wm_block_all");
   if(ba) ba.onclick = ()=>{
     if(!confirm("Block ALL non-admin profiles?")) return;
@@ -6197,6 +6214,7 @@ function renderSettings(app){
     <button id="sync_now" type="button" class="btn primary">Sync now</button>
     <button id="sync_pull" type="button" class="btn">Download only</button>
     <button id="sync_push" type="button" class="btn">Upload only</button>
+    <button id="sync_test" type="button" class="btn">Test connection</button>
   </div>
 
   <div id="settingsSyncStatus" class="small" style="margin-top:10px;opacity:.8">Last synced: —</div>
@@ -6241,15 +6259,6 @@ function renderSettings(app){
         </div>
       </div>
 
-        <div class="row space" style="margin-top:12px">
-          <div class="h">Profiles</div>
-          <button class="btn" id="wm_add" type="button">Add worker</button>
-        </div>
-
-        <div class="list" id="wm_list" style="margin-top:10px"></div>
-        <div class="smallmuted" style="margin-top:8px">Tip: keep an Admin profile so you can always access Settings.</div>
-      </div>
-
       <hr/>
       <div class="h">Deleted Jobs</div>
       <div id="deletedProjects" class="list" style="margin-top:8px"></div>
@@ -6258,6 +6267,8 @@ function renderSettings(app){
 
   // Google Sheets Sync (Settings)
   try{ bindGoogleSheetsSyncSettingsUI(); }catch(e){}
+
+  try{ const btn = document.getElementById('openWorkerMgmt'); if(btn) btn.onclick = ()=> navTo('workers'); }catch(e){}
 
   $("#saveSettings").onclick = ()=>{
     settings.theme = $("#set_theme").value;
@@ -6377,6 +6388,24 @@ function bindGoogleSheetsSyncSettingsUI(){
       refreshStatus();
     }
   };
+
+const btnTest = document.getElementById("sync_test");
+if(btnTest) btnTest.onclick = async ()=>{
+  saveSyncSettings();
+  const url = (settings.sync && settings.sync.url) ? settings.sync.url.trim() : "";
+  if(!url) return alert("Set Web App URL first.");
+  try{
+    if(badge) badge.textContent = "Test…";
+    const res = await fetch(url, { method: "GET", redirect:"follow", credentials:"omit", cache:"no-store" });
+    const txt = await res.text();
+    alert("GET " + res.status + "
+" + txt.slice(0, 500));
+  }catch(e){
+    alert("Test failed: " + (e && e.message ? e.message : String(e)));
+  }finally{
+    refreshStatus();
+  }
+};
 }
 
 
