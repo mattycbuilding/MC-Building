@@ -1,6 +1,6 @@
 
 
-const BUILD_ID = "mcb-build-20260124-1135";
+const BUILD_ID = "mcb-build-20260124-1140";
 
 try{
   const prev = localStorage.getItem("mcb_build_id") || "";
@@ -5163,6 +5163,9 @@ function openCCCPlanModal(project){
 function renderReports(app){
   setHeader("Reports");
   const projects = aliveArr(state.projects).slice().sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const today = new Date().toISOString().slice(0,10);
+  const weekAgo = new Date(Date.now()-7*86400000).toISOString().slice(0,10);
+
   app.innerHTML = `
     <div class="card">
       <div class="row space">
@@ -5172,64 +5175,220 @@ function renderReports(app){
           <button class="btn primary" id="runReport" type="button">Run Job Report</button>
         </div>
       </div>
+
       <div class="grid two">
         <div>
           <label>Project</label>
           <select id="r_project" class="input">
             <option value="__ALL__">All active sites (Hnry only)</option>
-${projects.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("")}
+            ${projects.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("")}
           </select>
         </div>
         <div></div>
       </div>
+
       <div class="grid two">
         <div>
-          <label>Date from</label>
-          <input id="r_from" class="input" type="date" value="${new Date(Date.now()-7*86400000).toISOString().slice(0,10)}" />
+          <div class="row space" style="align-items:flex-end">
+            <div style="flex:1">
+              <label>Date from</label>
+              <input id="r_from" class="input" type="date" value="${weekAgo}" />
+            </div>
+            <label class="btn" style="display:flex; gap:8px; align-items:center; justify-content:center; padding:10px 12px">
+              <input id="r_allDates" type="checkbox" />
+              All dates
+            </label>
+          </div>
         </div>
         <div>
           <label>Date to</label>
-          <input id="r_to" class="input" type="date" value="${new Date().toISOString().slice(0,10)}" />
+          <input id="r_to" class="input" type="date" value="${today}" />
         </div>
       </div>
-      <div class="sub">Reports open in a printable preview. Use your browser share/print to save as PDF.</div>
+
+      <hr/>
+      <h3 style="margin-top:0">Include in report</h3>
+      <div class="grid two">
+        <label class="item" style="display:flex; gap:10px; align-items:center">
+          <input type="checkbox" id="inc_summary" checked />
+          <div style="flex:1">
+            <div class="title">Project summary</div>
+            <div class="meta">Name, address, stage, key details.</div>
+          </div>
+        </label>
+
+        <label class="item" style="display:flex; gap:10px; align-items:center">
+          <input type="checkbox" id="inc_diary" checked />
+          <div style="flex:1">
+            <div class="title">Diary</div>
+            <div class="meta">Daily notes, hours, billable flag.</div>
+          </div>
+        </label>
+
+        <label class="item" style="display:flex; gap:10px; align-items:center">
+          <input type="checkbox" id="inc_tasks" checked />
+          <div style="flex:1">
+            <div class="title">Tasks</div>
+            <div class="meta">Open + done tasks and assignments.</div>
+          </div>
+        </label>
+
+        <label class="item" style="display:flex; gap:10px; align-items:center">
+          <input type="checkbox" id="inc_vars" checked />
+          <div style="flex:1">
+            <div class="title">Variations</div>
+            <div class="meta">Variation register.</div>
+          </div>
+        </label>
+
+        <label class="item" style="display:flex; gap:10px; align-items:center">
+          <input type="checkbox" id="inc_delivs" checked />
+          <div style="flex:1">
+            <div class="title">Deliveries</div>
+            <div class="meta">Suppliers, dates, status, items.</div>
+          </div>
+        </label>
+
+        <label class="item" style="display:flex; gap:10px; align-items:center">
+          <input type="checkbox" id="inc_insps" checked />
+          <div style="flex:1">
+            <div class="title">Inspections</div>
+            <div class="meta">CCC / council / QA inspections.</div>
+          </div>
+        </label>
+
+        <label class="item" style="display:flex; gap:10px; align-items:center">
+          <input type="checkbox" id="inc_equip" checked />
+          <div style="flex:1">
+            <div class="title">Equipment</div>
+            <div class="meta">Assigned tools/plant and locations.</div>
+          </div>
+        </label>
+
+        <label class="item" style="display:flex; gap:10px; align-items:center">
+          <input type="checkbox" id="inc_subbies" checked />
+          <div style="flex:1">
+            <div class="title">Subbies referenced</div>
+            <div class="meta">Subbies used on tasks for this job.</div>
+          </div>
+        </label>
+      </div>
+
+      <div class="sub" style="margin-top:10px">Reports open in a printable preview. Use your browser share/print to save as PDF.</div>
     </div>
   `;
+
+  const allDatesChk = $("#r_allDates");
+  const fromEl = $("#r_from");
+  const toEl = $("#r_to");
+  const syncDatesUI = ()=>{
+    const on = !!allDatesChk.checked;
+    fromEl.disabled = on;
+    toEl.disabled = on;
+    if(on){
+      fromEl.value = "";
+      toEl.value = "";
+    }else{
+      if(!fromEl.value) fromEl.value = weekAgo;
+      if(!toEl.value) toEl.value = today;
+    }
+  };
+  allDatesChk.onchange = syncDatesUI;
+  syncDatesUI();
+
+  const readInclude = ()=>({
+    summary: $("#inc_summary").checked,
+    diary: $("#inc_diary").checked,
+    tasks: $("#inc_tasks").checked,
+    vars: $("#inc_vars").checked,
+    delivs: $("#inc_delivs").checked,
+    insps: $("#inc_insps").checked,
+    equip: $("#inc_equip").checked,
+    subbies: $("#inc_subbies").checked
+  });
+
   $("#runReport").onclick = ()=>{
     const pid = $("#r_project").value;
     if(pid==="__ALL__"){ alert("Select a specific project for Job Report."); return; }
-    runReportUI(pid, $("#r_from").value, $("#r_to").value);
-  };
-  $("#hnryExport").onclick = ()=>{
-    const pid = $("#r_project").value;
-    runHnryExportUI(pid, $("#r_from").value, $("#r_to").value);
+    const allDates = $("#r_allDates").checked;
+    const from = allDates ? null : $("#r_from").value;
+    const to = allDates ? null : $("#r_to").value;
+    runReportUI(pid, from, to, readInclude());
   };
 
-  // HNRY SIMPLE export binding (override after render)
+  $("#hnryExport").onclick = ()=>{
+    const pid = $("#r_project").value;
+    const allDates = $("#r_allDates").checked;
+    const from = allDates ? null : $("#r_from").value;
+    const to = allDates ? null : $("#r_to").value;
+    runHnryExportUI(pid, from, to);
+  };
+
   const hnryBtn = document.getElementById("hnryExport");
   if(hnryBtn){
     hnryBtn.onclick = () => {
+      const allDates = document.getElementById("r_allDates").checked;
       runHnryDiaryExportSimple(
         document.getElementById("r_project").value,
-        document.getElementById("r_from").value,
-        document.getElementById("r_to").value
+        allDates ? null : document.getElementById("r_from").value,
+        allDates ? null : document.getElementById("r_to").value
       );
     };
   }
 }
 
-function runReportUI(projectId, from=null, to=null){
+function runReportUI(projectId, from=null, to=null, include=null){
   const isAll = projectId === "__ALL__";
   const p = isAll ? null : projectById(projectId);
   if(!isAll && !p) return;
-  const rangeFrom = from || new Date(Date.now()-7*86400000).toISOString().slice(0,10);
-  const rangeTo = to || new Date().toISOString().slice(0,10);
+
+  const inc = Object.assign({
+    summary:true,
+    diary:true,
+    tasks:true,
+    vars:true,
+    delivs:true,
+    insps:true,
+    equip:true,
+    subbies:true
+  }, include || {});
+
+  const allDates = !(from && to);
+  const rangeFrom = allDates ? "0000-01-01" : from;
+  const rangeTo = allDates ? "9999-12-31" : to;
 
   const tasks = alive(state.tasks).filter(t=>t.projectId===projectId && isAlive(t));
-  const diary = alive(state.diary).filter(d=>d.projectId===projectId && isAlive(d)).filter(d=>d.date>=rangeFrom && d.date<=rangeTo).sort((a,b)=>(a.date||"").localeCompare(b.date||""));
-  const vars = alive(state.variations).filter(v=>v.projectId===projectId && isAlive(v)).filter(v=> (v.date||"")>=rangeFrom && (v.date||"")<=rangeTo);
-  const delivs = alive(state.deliveries).filter(d=>d.projectId===projectId && isAlive(d)).filter(d=> (d.date||"")>=rangeFrom && (d.date||"")<=rangeTo);
-  const insps = alive(state.inspections).filter(i=>i.projectId===projectId && isAlive(i)).filter(i=> (i.date||"")>=rangeFrom && (i.date||"")<=rangeTo);
+  const diary = alive(state.diary)
+    .filter(d=>d.projectId===projectId && isAlive(d))
+    .filter(d=> allDates ? true : (d.date>=rangeFrom && d.date<=rangeTo))
+    .sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+
+  const vars = alive(state.variations)
+    .filter(v=>v.projectId===projectId && isAlive(v))
+    .filter(v=> allDates ? true : ((v.date||"")>=rangeFrom && (v.date||"")<=rangeTo));
+
+  const delivs = alive(state.deliveries)
+    .filter(d=>d.projectId===projectId && isAlive(d))
+    .filter(d=> allDates ? true : ((d.date||"")>=rangeFrom && (d.date||"")<=rangeTo));
+
+  const insps = alive(state.inspections)
+    .filter(i=>i.projectId===projectId && isAlive(i))
+    .filter(i=> allDates ? true : ((i.date||"")>=rangeFrom && (i.date||"")<=rangeTo));
+
+  const equip = aliveArr(state.equipment).filter(e=>!e.deletedAt && String(e.projectId)===String(projectId));
+  const usedSubbieIds = new Set(tasks.map(t=>t.assignedSubbieId).filter(Boolean).map(String));
+  const usedSubbies = aliveArr(state.subbies).filter(s=>!s.deletedAt && usedSubbieIds.has(String(s.id)));
+
+  const periodLabel = allDates ? "All dates" : `${dateFmt(rangeFrom)} → ${dateFmt(rangeTo)}`;
+
+  const assignedLabel = (t)=>{
+    const w = t.assignedWorkerId ? workerById(t.assignedWorkerId) : null;
+    if(w) return w.name || "";
+    if(t.assignedWorkerName) return t.assignedWorkerName;
+    const s = t.assignedSubbieId ? subbieById(t.assignedSubbieId) : null;
+    if(s) return s.name || "";
+    return t.assignedToName || "";
+  };
 
   const html = `
     <div class="card printOnly" style="padding:18px">
@@ -5250,72 +5409,142 @@ function runReportUI(projectId, from=null, to=null){
           <button class="btn primary" id="printBtn" type="button">Print / Save PDF</button>
         </div>
       </div>
-      <div class="sub">${escapeHtml(p.name)} • ${escapeHtml(p.address||"")}<br/>Period: ${dateFmt(rangeFrom)} → ${dateFmt(rangeTo)}</div>
-      <hr/>
-      <h2>Diary</h2>
-      ${diary.length ? diary.map(d=>`
-        <div class="item">
-          <div class="row space">
-            <div><strong>${dateFmt(d.date)}</strong> ${d.billable?`<span class="badge ok">Billable</span>`:`<span class="badge">Non‑billable</span>`} ${d.hours?`<span class="badge">⏱ ${escapeHtml(String(d.hours))}h</span>`:""}</div>
-            <div class="smallmuted">${escapeHtml(d.category||"")}</div>
+      <div class="sub">${escapeHtml(p.name)} • ${escapeHtml(p.address||"")}<br/>Period: ${escapeHtml(periodLabel)}</div>
+
+      ${inc.summary ? `
+        <hr/>
+        <h2>Project summary</h2>
+        <table>
+          <tbody>
+            <tr><td><strong>Project</strong></td><td>${escapeHtml(p.name||"")}</td></tr>
+            <tr><td><strong>Address</strong></td><td>${escapeHtml(p.address||"")}</td></tr>
+            <tr><td><strong>Stage</strong></td><td>${escapeHtml(p.stage||"")}</td></tr>
+            <tr><td><strong>Status</strong></td><td>${escapeHtml(p.status||"")}</td></tr>
+            <tr><td><strong>Coords</strong></td><td>${p.lat && p.lng ? escapeHtml(`${p.lat}, ${p.lng}`) : ""}</td></tr>
+          </tbody>
+        </table>
+      ` : ``}
+
+      ${inc.diary ? `
+        <hr/>
+        <h2>Diary</h2>
+        ${diary.length ? diary.map(d=>`
+          <div class="item">
+            <div class="row space">
+              <div><strong>${dateFmt(d.date)}</strong> ${d.billable?`<span class="badge ok">Billable</span>`:`<span class="badge">Non‑billable</span>`} ${d.hours?`<span class="badge">⏱ ${escapeHtml(String(d.hours))}h</span>`:""}</div>
+              <div class="smallmuted">${escapeHtml(d.category||"")}</div>
+            </div>
+            <div class="meta">${escapeHtml(d.summary||"")}</div>
+            ${d.createdByName ? `<div class="smallmuted">Entered by: ${escapeHtml(d.createdByName)}</div>` : ``}
           </div>
-          <div class="meta">${escapeHtml(d.summary||"")}</div>
-        </div>
-      `).join("") : `<div class="sub">No diary entries in range.</div>`}
+        `).join("") : `<div class="sub">No diary entries in range.</div>`}
+      ` : ``}
 
-      <hr/>
-      <h2>Open tasks</h2>
-      ${tasks.filter(t=>t.status!=="Done").length ? `
-        <table>
-          <thead><tr><th>Task</th><th>Status</th><th>Due</th><th>Assigned</th></tr></thead>
-          <tbody>
-            ${tasks.filter(t=>t.status!=="Done").map(t=>{
-              const s = t.assignedSubbieId ? subbieById(t.assignedSubbieId) : null;
-              return `<tr><td>${escapeHtml(t.title)}</td><td>${escapeHtml(t.status||"")}</td><td>${t.dueDate?escapeHtml(dateFmt(t.dueDate)):""}</td><td>${s?escapeHtml(s.name):""}</td></tr>`;
-            }).join("")}
-          </tbody>
-        </table>` : `<div class="sub">No open tasks.</div>`}
+      ${inc.tasks ? `
+        <hr/>
+        <h2>Tasks</h2>
 
-      <hr/>
-      <h2>Variations</h2>
-      ${vars.length ? `
-        <table>
-          <thead><tr><th>Title</th><th>Status</th><th>Date</th><th>Amount</th></tr></thead>
-          <tbody>
-            ${vars.map(v=>`<tr><td>${escapeHtml(v.title)}</td><td>${escapeHtml(v.status||"")}</td><td>${v.date?escapeHtml(dateFmt(v.date)):""}</td><td>${v.amount?escapeHtml(money(v.amount)):""}</td></tr>`).join("")}
-          </tbody>
-        </table>` : `<div class="sub">No variations in range.</div>`}
+        <h3>Open</h3>
+        ${tasks.filter(t=>t.status!=="Done").length ? `
+          <table>
+            <thead><tr><th>Task</th><th>Status</th><th>Due</th><th>Assigned</th></tr></thead>
+            <tbody>
+              ${tasks.filter(t=>t.status!=="Done").map(t=>`
+                <tr>
+                  <td>${escapeHtml(t.title||"")}</td>
+                  <td>${escapeHtml(t.status||"")}</td>
+                  <td>${t.dueDate?escapeHtml(dateFmt(t.dueDate)):""}</td>
+                  <td>${escapeHtml(assignedLabel(t)||"")}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>` : `<div class="sub">No open tasks.</div>`}
 
-      <hr/>
-      <h2>Deliveries</h2>
-      ${delivs.length ? `
-        <table>
-          <thead><tr><th>Supplier</th><th>Date</th><th>Status</th><th>Items</th></tr></thead>
-          <tbody>
-            ${delivs.map(d=>`<tr><td>${escapeHtml(d.supplier||"")}</td><td>${d.date?escapeHtml(dateFmt(d.date)):""}</td><td>${escapeHtml(d.status||"")}</td><td>${escapeHtml((d.items||"").slice(0,120))}</td></tr>`).join("")}
-          </tbody>
-        </table>` : `<div class="sub">No deliveries in range.</div>`}
+        <h3 style="margin-top:14px">Done</h3>
+        ${tasks.filter(t=>t.status==="Done").length ? `
+          <table>
+            <thead><tr><th>Task</th><th>Done</th><th>Assigned</th></tr></thead>
+            <tbody>
+              ${tasks.filter(t=>t.status==="Done").map(t=>`
+                <tr>
+                  <td>${escapeHtml(t.title||"")}</td>
+                  <td>${t.completedAt?escapeHtml(dateFmt((t.completedAt||"").slice(0,10))):""}</td>
+                  <td>${escapeHtml(assignedLabel(t)||"")}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>` : `<div class="sub">No completed tasks.</div>`}
+      ` : ``}
 
-      <hr/>
-      <h2>Inspections</h2>
-      ${insps.length ? `
-        <table>
-          <thead><tr><th>Type</th><th>Date</th><th>Result</th><th>Notes</th></tr></thead>
-          <tbody>
-            ${insps.map(i=>`<tr><td>${escapeHtml(i.type||"")}</td><td>${i.date?escapeHtml(dateFmt(i.date)):""}</td><td>${escapeHtml(i.result||"")}</td><td>${escapeHtml((i.notes||"").slice(0,120))}</td></tr>`).join("")}
-          </tbody>
-        </table>` : `<div class="sub">No inspections in range.</div>`}
+      ${inc.vars ? `
+        <hr/>
+        <h2>Variations</h2>
+        ${vars.length ? `
+          <table>
+            <thead><tr><th>Title</th><th>Status</th><th>Date</th><th>Amount</th></tr></thead>
+            <tbody>
+              ${vars.map(v=>`<tr><td>${escapeHtml(v.title||"")}</td><td>${escapeHtml(v.status||"")}</td><td>${v.date?escapeHtml(dateFmt(v.date)):""}</td><td>${v.amount?escapeHtml(money(v.amount)):""}</td></tr>`).join("")}
+            </tbody>
+          </table>` : `<div class="sub">No variations in range.</div>`}
+      ` : ``}
+
+      ${inc.delivs ? `
+        <hr/>
+        <h2>Deliveries</h2>
+        ${delivs.length ? `
+          <table>
+            <thead><tr><th>Supplier</th><th>Date</th><th>Status</th><th>Items</th></tr></thead>
+            <tbody>
+              ${delivs.map(d=>`<tr><td>${escapeHtml(d.supplier||"")}</td><td>${d.date?escapeHtml(dateFmt(d.date)):""}</td><td>${escapeHtml(d.status||"")}</td><td>${escapeHtml((d.items||"").slice(0,180))}</td></tr>`).join("")}
+            </tbody>
+          </table>` : `<div class="sub">No deliveries in range.</div>`}
+      ` : ``}
+
+      ${inc.insps ? `
+        <hr/>
+        <h2>Inspections</h2>
+        ${insps.length ? `
+          <table>
+            <thead><tr><th>Type</th><th>Date</th><th>Result</th><th>Notes</th></tr></thead>
+            <tbody>
+              ${insps.map(i=>`<tr><td>${escapeHtml(i.type||"")}</td><td>${i.date?escapeHtml(dateFmt(i.date)):""}</td><td>${escapeHtml(i.result||"")}</td><td>${escapeHtml((i.notes||"").slice(0,180))}</td></tr>`).join("")}
+            </tbody>
+          </table>` : `<div class="sub">No inspections in range.</div>`}
+      ` : ``}
+
+      ${inc.equip ? `
+        <hr/>
+        <h2>Equipment (assigned)</h2>
+        ${equip.length ? `
+          <table>
+            <thead><tr><th>Item</th><th>Type</th><th>Location</th><th>Test &amp; Tag</th></tr></thead>
+            <tbody>
+              ${equip.map(e=>`<tr><td>${escapeHtml(e.name||"")}</td><td>${escapeHtml(e.type||"")}</td><td>${escapeHtml(e.location||"")}</td><td>${e.testTagDue?escapeHtml(dateFmt(e.testTagDue)):"—"}</td></tr>`).join("")}
+            </tbody>
+          </table>` : `<div class="sub">No equipment assigned to this project.</div>`}
+      ` : ``}
+
+      ${inc.subbies ? `
+        <hr/>
+        <h2>Subbies referenced (from tasks)</h2>
+        ${usedSubbies.length ? `
+          <table>
+            <thead><tr><th>Name</th><th>Trade</th><th>Phone</th><th>Email</th></tr></thead>
+            <tbody>
+              ${usedSubbies.map(s=>`<tr><td>${escapeHtml(s.name||"")}</td><td>${escapeHtml(s.trade||"")}</td><td>${escapeHtml(s.phone||"")}</td><td>${escapeHtml(s.email||"")}</td></tr>`).join("")}
+            </tbody>
+          </table>` : `<div class="sub">No subbies referenced on tasks for this job.</div>`}
+      ` : ``}
 
       <hr/>
       <div class="smallmuted">Generated ${new Date().toLocaleString("en-NZ")}</div>
     </div>
   `;
 
-  // open in same app as modal with print
   showModal(html);
   $("#copyLink").onclick = async ()=>{
     try{
-      await navigator.clipboard.writeText(`Job Report: ${p.name} (${rangeFrom} to ${rangeTo})`);
+      await navigator.clipboard.writeText(`Job Report: ${p.name} (${allDates?"All dates":(rangeFrom+" to "+rangeTo)})`);
       alert("Copied.");
     }catch(e){ alert("Copy failed."); }
   };
