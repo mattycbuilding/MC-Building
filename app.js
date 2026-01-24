@@ -1224,7 +1224,7 @@ let __syncTimer = null;
 let __syncSuspend = false;
 
 function syncEnabled(){
-  return !!(settings && settings.sync && settings.sync.enabled && settings.sync.url && settings.sync.apiSecret);
+  return !!(settings && settings.sync && settings.sync.enabled && window.SYNC_SERVER_URL_HARDCODED && window.SYNC_SECRET_HARDCODED);
 }
 
 function setSyncStatus(text){
@@ -1373,11 +1373,11 @@ async function syncPush(){
   try{
     const payload = {
       action: "push",
-      apiSecret: settings.sync.apiSecret,
+      apiSecret: window.SYNC_SECRET_HARDCODED,
       deviceId: settings.sync.deviceId,
       data: buildPushPayload()
     };
-    const out = await fetchJSON(settings.sync.url, payload);
+    const out = await fetchJSON(window.SYNC_SERVER_URL_HARDCODED, payload);
     settings.sync.lastVersion = out.version || settings.sync.lastVersion || 0;
     settings.sync.lastPushAt = nowISO();
     settings.sync.lastSyncAt = settings.sync.lastPushAt;
@@ -1396,11 +1396,11 @@ async function syncPull(){
   try{
     const payload = {
       action: "pull",
-      apiSecret: settings.sync.apiSecret,
+      apiSecret: window.SYNC_SECRET_HARDCODED,
       deviceId: settings.sync.deviceId,
       sinceVersion: Number(settings.sync.lastVersion || 0)
     };
-    const out = await fetchJSON(settings.sync.url, payload);
+    const out = await fetchJSON(window.SYNC_SERVER_URL_HARDCODED, payload);
 
     __syncSuspend = true;
     try{
@@ -6236,10 +6236,10 @@ function renderSettings(app){
   </label>
 
   <label style="margin-top:10px">Web App URL</label>
-  <input id="sync_url" class="input" value="${escapeHtml(settings.sync?.url || "https://script.google.com/macros/s/AKfycbx7QQEDK9J8o2Ei6HSKQ4PRmEMZobXXW97_Oef4EPuz5ZV5smDHHiAuHHQI2PsAwAzslA/exec")}" />
+  
 
-  <label style="margin-top:10px">API Secret</label>
-  <input id="sync_secret" class="input" value="${escapeHtml(settings.sync?.apiSecret || "MCB Data")}" />
+  
+  
 
   <label style="margin-top:10px">Auto sync interval (seconds)</label>
   <input id="sync_interval" class="input" type="number" min="15" step="1" value="${escapeHtml(String(settings.sync?.autoIntervalSec || 60))}" />
@@ -6369,8 +6369,8 @@ function bindGoogleSheetsSyncSettingsUI(){
   const saveSyncSettings = ()=>{
     settings.sync = settings.sync || defaultSettings().sync;
     settings.sync.enabled = !!(enabledEl && enabledEl.checked);
-    settings.sync.url = (urlEl ? urlEl.value.trim() : settings.sync.url || "").trim();
-    settings.sync.apiSecret = (secretEl ? secretEl.value : settings.sync.apiSecret || "").trim();
+    window.SYNC_SERVER_URL_HARDCODED = (urlEl ? urlEl.value.trim() : window.SYNC_SERVER_URL_HARDCODED || "").trim();
+    window.SYNC_SECRET_HARDCODED = (secretEl ? secretEl.value : window.SYNC_SECRET_HARDCODED || "").trim();
     settings.sync.autoIntervalSec = Math.max(15, Number(intervalEl ? intervalEl.value : settings.sync.autoIntervalSec || 60) || 60);
 
     // ensure device id exists
@@ -6426,7 +6426,7 @@ function bindGoogleSheetsSyncSettingsUI(){
 const btnTest = document.getElementById("sync_test");
 if(btnTest) btnTest.onclick = async ()=>{
   saveSyncSettings();
-  const url = (settings.sync && settings.sync.url) ? settings.sync.url.trim() : "";
+  const url = (settings.sync && window.SYNC_SERVER_URL_HARDCODED) ? window.SYNC_SERVER_URL_HARDCODED.trim() : "";
   if(!url) return alert("Set Web App URL first.");
   try{
     if(badge) badge.textContent = "Test…";
@@ -8493,7 +8493,7 @@ async function syncPing() {
 
 /* =====================
    MCB CLEAN SHEETS SYNC (v1)
-   - Uses Settings -> Sync URL + API Secret (settings.sync.url / settings.sync.apiSecret)
+   - Uses Settings -> Sync URL + API Secret (window.SYNC_SERVER_URL_HARDCODED / window.SYNC_SECRET_HARDCODED)
    - Calls Apps Script actions: ping, listtabs, readtab, writetab
    - Hooks buttons: sync_test, sync_now, sync_push, sync_pull
    ===================== */
@@ -8503,16 +8503,7 @@ async function syncPing() {
   window.SYNC_SERVER_URL_DEFAULT = 'https://script.google.com/macros/s/AKfycbzjnFoxE9FfRpGh4QNAZrr8vcnVPix-X7--YHlLcWFllryEgbDiaLq_LE3_Vje3_a6h_g/exec';
 
   function _syncCfg() {
-    try {
-      if (typeof settings !== 'undefined' && settings && settings.sync) {
-        return {
-          url: (settings.sync.url || window.SYNC_SERVER_URL_DEFAULT || '').trim(),
-          secret: (settings.sync.apiSecret || '').trim(),
-          deviceId: (settings.sync.deviceId || '').trim()
-        };
-      }
-    } catch(e) {}
-    return { url: (window.SYNC_SERVER_URL_DEFAULT||'').trim(), secret: '', deviceId: '' };
+    return { url: (window.SYNC_SERVER_URL_HARDCODED||'').trim(), secret: (window.SYNC_SECRET_HARDCODED||'').trim(), deviceId: (localStorage.getItem('mcbDeviceId')||localStorage.getItem('deviceId')||'device') };
   }
 
   function _q(params) {
@@ -8716,3 +8707,8 @@ async function syncPing() {
   window.mcbSync_pullAll = mcbSync_pullAll;
   window.mcbSync_now = mcbSync_now;
 })();
+
+
+// ==== Hardcoded Sync Config (UI removed) ====
+window.SYNC_SERVER_URL_HARDCODED = 'https://script.google.com/macros/s/AKfycbzjnFoxE9FfRpGh4QNAZrr8vcnVPix-X7--YHlLcWFllryEgbDiaLq_LE3_Vje3_a6h_g/exec';
+window.SYNC_SECRET_HARDCODED = 'MCB-SYNC-2026-9F3K7Q2P';
