@@ -8481,9 +8481,6 @@ function initNavMenu(){
 }
 
 
-window.SYNC_SERVER_URL = 'https://script.google.com/macros/s/AKfycbzjnFoxE9FfRpGh4QNAZrr8vcnVPix-X7--YHlLcWFllryEgbDiaLq_LE3_Vje3_a6h_g/exec';
-
-
 async function syncPing() {
   try {
     const res = await fetch(window.SYNC_SERVER_URL + '?action=ping');
@@ -8494,16 +8491,228 @@ async function syncPing() {
   }
 }
 
-window.SYNC_SECRET = 'MCB-SYNC-2026-9F3K7Q2P';
+/* =====================
+   MCB CLEAN SHEETS SYNC (v1)
+   - Uses Settings -> Sync URL + API Secret (settings.sync.url / settings.sync.apiSecret)
+   - Calls Apps Script actions: ping, listtabs, readtab, writetab
+   - Hooks buttons: sync_test, sync_now, sync_push, sync_pull
+   ===================== */
 
+(function() {
+  // Default URL if settings not yet set
+  window.SYNC_SERVER_URL_DEFAULT = 'https://script.google.com/macros/s/AKfycbzjnFoxE9FfRpGh4QNAZrr8vcnVPix-X7--YHlLcWFllryEgbDiaLq_LE3_Vje3_a6h_g/exec';
 
-async function testSyncConnection() {
-  try {
-    const url = window.SYNC_SERVER_URL + '?action=ping&secret=' + encodeURIComponent(window.SYNC_SECRET);
-    const res = await fetch(url);
-    const data = await res.json();
-    alert('SYNC TEST RESULT: ' + JSON.stringify(data));
-  } catch (err) {
-    alert('SYNC ERROR: ' + err.message);
+  function _syncCfg() {
+    try {
+      if (typeof settings !== 'undefined' && settings && settings.sync) {
+        return {
+          url: (settings.sync.url || window.SYNC_SERVER_URL_DEFAULT || '').trim(),
+          secret: (settings.sync.apiSecret || '').trim(),
+          deviceId: (settings.sync.deviceId || '').trim()
+        };
+      }
+    } catch(e) {}
+    return { url: (window.SYNC_SERVER_URL_DEFAULT||'').trim(), secret: '', deviceId: '' };
   }
-}
+
+  function _q(params) {
+    const usp = new URLSearchParams();
+    Object.keys(params||{}).forEach(k => {
+      const v = params[k];
+      if (v === undefined || v === null) return;
+      usp.set(k, String(v));
+    });
+    return usp.toString();
+  }
+
+  async function _fetchSheets(action, params, bodyObj) {
+    const cfg = _syncCfg();
+    if (!cfg.url) throw new Error('Missing Sync URL (Settings → Sync)');
+    if (!cfg.secret) throw new Error('Missing API Secret (Settings → Sync)');
+
+    const url = cfg.url + (cfg.url.includes('?') ? '&' : '?') + _q({ action, secret: cfg.secret, ...params });
+
+    const init = bodyObj
+      ? {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(bodyObj),
+          redirect: 'follow',
+          credentials: 'omit',
+          cache: 'no-store'
+        }
+      : {
+          method: 'GET',
+          redirect: 'follow',
+          credentials: 'omit',
+          cache: 'no-store'
+        };
+
+    const res = await fetch(url, init);
+    const txt = await res.text();
+    let data;
+    try { data = JSON.parse(txt); } catch(e) { data = { ok:false, error:'Non-JSON response', raw: txt }; }
+    if (!data || data.ok === false) {
+      const msg = (data && data.error) ? data.error : ('HTTP ' + res.status);
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  async function mcbSync_test() {
+    try {
+      const out = await _fetchSheets('ping', {}, null);
+      alert('Sync OK: ' + JSON.stringify(out));
+    } catch (e) {
+      alert('Sync error: ' + e.message);
+    }
+  }
+
+  function _sheetRowFromRecord(rec) {
+    // Use existing normaliseRecord() if available
+    let r = rec;
+    try {
+      if (typeof normaliseRecord === 'function') r = normaliseRecord(rec);
+    } catch(e) {}
+    const deviceId = (_syncCfg().deviceId || 'device');
+    return {
+      id: r && r.id ? r.id : (crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now())),
+      projectId: (r && r.projectId) ? r.projectId : '',
+      data: JSON.stringify(r || {}),
+      updatedAt: (r && r.updatedAt) ? r.updatedAt : (typeof nowISO === 'function' ? nowISO() : new Date().toISOString()),
+      deviceId: deviceId,
+      deleted: (r && r.deleted) ? true : false,
+      rev: (r && r.rev) ? r.rev : 1
+    };
+  }
+
+  async function mcbSync_pushAll() {
+    try {
+      if (typeof ensureSyncDeviceId === 'function') ensureSyncDeviceId();
+      if (typeof syncEnabled === 'function' && !syncEnabled()) {
+        alert('Sync is disabled (toggle Enabled in Settings → Sync)');
+        return;
+      }
+      if (typeof setSyncStatus === 'function') setSyncStatus('Syncing…');
+      const cfg = _syncCfg();
+
+      // Push each mapped table to its sheet tab
+      const sheetNames = (typeof SYNC_TABLES !== 'undefined') ? Object.keys(SYNC_TABLES) : [];
+      for (const key of sheetNames) {
+        const sheetName = SYNC_TABLES[key];
+        const local = (typeof getLocalTable === 'function') ? getLocalTable(key) : [];
+        const rows = (local || []).map(_sheetRowFromRecord);
+        await _fetchSheets('writetab', { tab: sheetName }, rows);
+      }
+
+      // Push settings into settings tab as key/value
+      try {
+        if (typeof settings !== 'undefined' && settings) {
+          const safeSettings = { ...settings };
+          // Never sync credentials outward
+          if (safeSettings.sync) safeSettings.sync = { ...safeSettings.sync, apiSecret: '***', url: '' };
+          const rows = [{
+            key: 'globalSettings',
+            value: JSON.stringify(safeSettings),
+            updatedAt: (typeof nowISO === 'function' ? nowISO() : new Date().toISOString()),
+            deviceId: cfg.deviceId || 'device',
+            rev: 1
+          }];
+          await _fetchSheets('writetab', { tab: 'settings' }, rows);
+        }
+      } catch(e) { /* ignore settings push */ }
+
+      try {
+        if (typeof settings !== 'undefined' && settings && settings.sync) {
+          settings.sync.lastPushAt = (typeof nowISO === 'function' ? nowISO() : new Date().toISOString());
+          settings.sync.lastSyncAt = settings.sync.lastPushAt;
+          if (typeof saveSettings === 'function') saveSettings(settings);
+        }
+      } catch(e) {}
+
+      if (typeof setSyncStatus === 'function') setSyncStatus('Synced');
+      alert('Sync push complete');
+    } catch (e) {
+      if (typeof setSyncStatus === 'function') setSyncStatus('Sync error');
+      alert('Sync error: ' + e.message);
+    }
+  }
+
+  async function mcbSync_pullAll() {
+    try {
+      if (typeof ensureSyncDeviceId === 'function') ensureSyncDeviceId();
+      if (typeof syncEnabled === 'function' && !syncEnabled()) {
+        alert('Sync is disabled (toggle Enabled in Settings → Sync)');
+        return;
+      }
+      if (typeof setSyncStatus === 'function') setSyncStatus('Syncing…');
+
+      const sheetNames = (typeof SYNC_TABLES !== 'undefined') ? Object.keys(SYNC_TABLES) : [];
+      for (const key of sheetNames) {
+        const sheetName = SYNC_TABLES[key];
+        const out = await _fetchSheets('readtab', { tab: sheetName }, null);
+        const rows = Array.isArray(out.rows) ? out.rows : [];
+        // Convert sheet rows -> envelopes expected by mergeByUpdatedAt
+        const incoming = rows.map(r => ({ json: r.data || r.json || '', updatedAt: r.updatedAt || '' })).filter(x => x.json);
+        if (!incoming.length) continue;
+        if (typeof mergeByUpdatedAt === 'function' && typeof getLocalTable === 'function' && typeof setLocalTable === 'function') {
+          const merged = mergeByUpdatedAt(getLocalTable(key), incoming);
+          setLocalTable(key, merged);
+        }
+      }
+
+      // Pull settings
+      try {
+        const out = await _fetchSheets('readtab', { tab: 'settings' }, null);
+        const rows = Array.isArray(out.rows) ? out.rows : [];
+        const row = rows.find(r => String(r.key||'') === 'globalSettings');
+        if (row && row.value) {
+          const obj = JSON.parse(row.value);
+          if (obj) {
+            const keepSync = (typeof settings !== 'undefined' && settings && settings.sync) ? { ...settings.sync } : null;
+            if (typeof defaultSettings === 'function') {
+              settings = { ...defaultSettings(), ...obj };
+              if (keepSync) settings.sync = keepSync;
+              if (typeof saveSettings === 'function') saveSettings(settings);
+            }
+          }
+        }
+      } catch(e) { /* ignore settings pull */ }
+
+      try {
+        if (typeof settings !== 'undefined' && settings && settings.sync) {
+          settings.sync.lastSyncAt = (typeof nowISO === 'function' ? nowISO() : new Date().toISOString());
+          if (typeof saveSettings === 'function') saveSettings(settings);
+        }
+      } catch(e) {}
+
+      if (typeof setSyncStatus === 'function') setSyncStatus('Synced');
+      alert('Sync pull complete');
+    } catch (e) {
+      if (typeof setSyncStatus === 'function') setSyncStatus('Sync error');
+      alert('Sync error: ' + e.message);
+    }
+  }
+
+  async function mcbSync_now() {
+    // Pull then push to converge
+    await mcbSync_pullAll();
+    await mcbSync_pushAll();
+  }
+
+  // Hook UI buttons (works even if pages re-render)
+  document.addEventListener('click', function(ev) {
+    const t = ev.target;
+    if (!t || !t.id) return;
+    if (t.id === 'sync_test') { ev.preventDefault(); mcbSync_test(); }
+    if (t.id === 'sync_pull') { ev.preventDefault(); mcbSync_pullAll(); }
+    if (t.id === 'sync_push') { ev.preventDefault(); mcbSync_pushAll(); }
+    if (t.id === 'sync_now') { ev.preventDefault(); mcbSync_now(); }
+  }, true);
+
+  // Expose for manual calling if needed
+  window.mcbSync_test = mcbSync_test;
+  window.mcbSync_pushAll = mcbSync_pushAll;
+  window.mcbSync_pullAll = mcbSync_pullAll;
+  window.mcbSync_now = mcbSync_now;
+})();
