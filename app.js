@@ -873,18 +873,93 @@ function generateProgrammeForProject(p, opts={}){
   return tasks;
 }
 
+
+// ===== Custom Programme Sections =====
+function ensureCustomProgramme(p){
+  if(!p.customProgramme) p.customProgramme = [];
+  if(!p.programmeMode) p.programmeMode = "template"; // "template" | "custom"
+  // normalize items
+  p.customProgramme = (p.customProgramme||[]).map(s=>{
+    if(!s || typeof s!=="object") return null;
+    const ns = { ...s };
+    if(!ns.id) ns.id = uid();
+    if(!ns.title) ns.title = "Section";
+    ns.days = Number(ns.days || 1);
+    if(ns.days < 1) ns.days = 1;
+    if(!ns.startDate) ns.startDate = "";
+    ns.manualStart = !!ns.manualStart;
+    return ns;
+  }).filter(Boolean);
+  return p.customProgramme;
+}
+function computeCustomProgrammeSchedule(p){
+  ensureCustomProgramme(p);
+  const sections = p.customProgramme;
+  const projStart = p.programmeStartDate || fmtISO(new Date());
+  let cursor = projStart;
+
+  const out = [];
+  for(let i=0;i<sections.length;i++){
+    const s = { ...sections[i] };
+    const start = (s.manualStart && s.startDate) ? s.startDate : (s.startDate || cursor);
+    s.plannedStart = start;
+    const end = fmtISO(addDays(start, Math.max(0, Number(s.days||1)-1)));
+    s.plannedEnd = end;
+    out.push(s);
+
+    // next cursor is day after end
+    cursor = fmtISO(addDays(end, 1));
+
+    // if next section is not manualStart, keep its startDate empty so it follows automatically
+    if(i+1 < sections.length){
+      if(!sections[i+1].manualStart){
+        sections[i+1].startDate = "";
+      }
+    }
+  }
+  return out;
+}
+function totalDaysForCustomProgramme(schedule){
+  return (schedule||[]).reduce((a,s)=>a + (Number(s.days||0)), 0);
+}
+
 function projectProgramme(p){
-  const current = programmeTasksForProject(p.id);
-  const key = p.programmeTemplateKey || "standard_nz";
+  // Ensure custom programme fields exist
+  ensureCustomProgramme(p);
+
+  const mode = p.programmeMode || "template"; // template | custom
+  const templateTasks = programmeTasksForProject(p.id);
+  const tplKey = p.programmeTemplateKey || "standard_nz";
   const complexity = p.programmeComplexity || "Moderate";
   const start = p.programmeStartDate || fmtISO(new Date());
-  const finish = current.length ? current.map(t=>t.plannedEnd).filter(Boolean).sort().slice(-1)[0] : "";
-  const totalDays = current.length ? current.reduce((a,t)=>a+(Number(t.totalDays||0)),0) : 0;
+
+  const customSchedule = computeCustomProgrammeSchedule(p);
+  const customFinish = customSchedule.length ? customSchedule.map(s=>s.plannedEnd).filter(Boolean).sort().slice(-1)[0] : "";
+  const customDays = totalDaysForCustomProgramme(customSchedule);
+
+  const tplFinish = templateTasks.length ? templateTasks.map(t=>t.plannedEnd).filter(Boolean).sort().slice(-1)[0] : "";
+  const tplDays = templateTasks.length ? templateTasks.reduce((a,t)=>a+(Number(t.totalDays||0)),0) : 0;
+
+  const finish = mode==="custom" ? customFinish : tplFinish;
+  const totalDays = mode==="custom" ? customDays : tplDays;
 
   return `
     <div class="card">
-      <div class="row space noPrint" style="gap:10px; flex-wrap:wrap">
-        <div class="row" style="gap:10px; flex-wrap:wrap">
+      <div class="row space noPrint" style="gap:10px; flex-wrap:wrap; align-items:flex-end">
+        <div class="row" style="gap:10px; flex-wrap:wrap; align-items:center">
+          <label class="sub">Mode</label>
+          <select class="input" id="progMode" style="min-width:180px">
+            <option value="template">Template programme</option>
+            <option value="custom">Custom programme</option>
+          </select>
+        </div>
+
+        <div class="row" style="gap:10px; flex-wrap:wrap; align-items:center">
+          <label class="sub">Project start</label>
+          <input class="input" id="progStart" type="date" value="${escapeAttr(start)}" />
+        </div>
+
+        <div class="row" style="gap:10px; flex-wrap:wrap; align-items:center" id="tplControls">
           <label class="sub">Template</label>
           <select class="input" id="progTpl" style="min-width:220px">
             <option value="standard_nz">Standard NZ Residential</option>
@@ -896,7 +971,8 @@ function projectProgramme(p){
             <option value="re_roof">Re-roof / Roofing</option>
           </select>
         </div>
-        <div class="row" style="gap:10px; flex-wrap:wrap">
+
+        <div class="row" style="gap:10px; flex-wrap:wrap; align-items:center" id="tplControls2">
           <label class="sub">Complexity</label>
           <select class="input" id="progCx" style="min-width:160px">
             <option>Simple</option>
@@ -904,27 +980,143 @@ function projectProgramme(p){
             <option>Complex</option>
           </select>
         </div>
-        <div class="row" style="gap:10px; flex-wrap:wrap">
-          <label class="sub">Start</label>
-          <input class="input" id="progStart" type="date" value="${escapeAttr(start)}" />
+
+        <button class="btn primary" id="progGen" type="button">Generate programme</button>
+
+        <div class="row" style="gap:10px; flex-wrap:wrap; align-items:center" id="customControls">
+          <button class="btn" id="customAddSection" type="button">Add section</button>
+          <button class="btn" id="customAutoFix" type="button">Auto-consecutive</button>
         </div>
-        <button class="btn primary" id="progGen" type="button">${current.length? "Regenerate":"Generate"} programme</button>
       </div>
+
       <div class="row space" style="margin-top:10px">
         <div class="sub">Projected finish: <b>${escapeHtml(finish || "—")}</b></div>
-        <div class="sub">Total planned days (incl buffers): <b>${totalDays || 0}</b></div>
+        <div class="sub">Total planned days: <b>${totalDays || 0}</b></div>
       </div>
+
+      <div id="customEditor" style="margin-top:10px"></div>
     </div>
 
     <div class="card" style="margin-top:12px">
-      ${current.length ? programmeGantt(current, p.id) : `<div class="sub">No programme yet. Use <b>Generate programme</b>.</div>`}
+      ${mode==="custom"
+        ? customProgrammeGantt(customSchedule)
+        : (templateTasks.length ? programmeGantt(templateTasks, p.id) : `<div class="sub">No programme yet. Use <b>Generate programme</b>.</div>`)}
     </div>
-  
+
     <div class="card" style="margin-top:12px">
       <div class="row space noPrint"><div class="h3">Removed programme tasks</div><div class="sub">Restore tasks removed for this job</div></div>
       <div id="removedProgrammeList" style="margin-top:10px"></div>
     </div>
 `;
+}
+
+function customProgrammeGantt(schedule){
+  const rows = (schedule||[]).map((s,idx)=>{
+    const dur = Number(s.days||1);
+    const barW = Math.min(100, Math.max(3, dur*6));
+    const badge = s.manualStart ? "badge" : "badge";
+    return `
+      <div class="gRow">
+        <div class="gName">
+          <div class="row" style="gap:8px; flex-wrap:wrap; align-items:center">
+            <span class="${badge}">Section</span>
+            <b>${escapeHtml(s.title||("Section "+(idx+1)))}</b>
+          </div>
+          <div class="sub">${s.manualStart ? "Custom start date" : "Consecutive by default"}</div>
+        </div>
+        <div class="gDates sub">${escapeHtml(s.plannedStart||"")} → ${escapeHtml(s.plannedEnd||"")}</div>
+        <div class="gBar"><div class="bar" style="width:${barW}%"></div></div>
+        <div class="gDur sub">${dur}d</div>
+      </div>
+    `;
+  }).join("");
+  return `<div class="gantt">${rows || `<div class="sub">No custom sections yet. Click <b>Add section</b>.</div>`}</div>`;
+}
+
+
+function renderCustomProgrammeEditor(p){
+  ensureCustomProgramme(p);
+  const wrap = document.getElementById("customEditor");
+  if(!wrap) return;
+
+  const schedule = computeCustomProgrammeSchedule(p);
+  const rows = p.customProgramme.map((s,idx)=>{
+    const sch = schedule[idx] || {};
+    return `
+      <div class="row" style="gap:10px; flex-wrap:wrap; align-items:flex-end; margin:10px 0; padding:10px; border:1px solid rgba(255,255,255,.08); border-radius:14px">
+        <div style="min-width:220px; flex:2">
+          <label class="sub">Title</label>
+          <input class="input" data-cprog-title="${escapeAttr(s.id)}" value="${escapeAttr(s.title||"")}" />
+        </div>
+        <div style="min-width:120px">
+          <label class="sub">Days</label>
+          <input class="input" type="number" min="1" step="1" data-cprog-days="${escapeAttr(s.id)}" value="${escapeAttr(String(Number(s.days||1)))}" />
+        </div>
+        <div style="min-width:170px">
+          <label class="sub">Start date</label>
+          <input class="input" type="date" data-cprog-start="${escapeAttr(s.id)}" value="${escapeAttr(s.manualStart ? (s.startDate||sch.plannedStart||"") : (s.startDate||""))}" />
+          <div class="smallmuted">
+            ${s.manualStart ? "Manual" : "Auto"} • ${escapeHtml((sch.plannedStart||"—"))} → ${escapeHtml((sch.plannedEnd||"—"))}
+          </div>
+        </div>
+        <div class="row" style="gap:8px">
+          <button class="btn ghost sm" type="button" data-cprog-toggle="${escapeAttr(s.id)}">${s.manualStart?"Auto":"Manual"}</button>
+          <button class="btn ghost sm danger" type="button" data-cprog-del="${escapeAttr(s.id)}">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  wrap.innerHTML = rows || `<div class="sub">No custom sections yet. Click <b>Add section</b>.</div>`;
+
+  // Bind inputs
+  $$("[data-cprog-title]").forEach(el=> el.onchange = ()=>{
+    const id = el.getAttribute("data-cprog-title");
+    const it = p.customProgramme.find(x=>String(x.id)===String(id));
+    if(!it) return;
+    it.title = el.value.trim() || "Section";
+    it.updatedAt = new Date().toISOString();
+    saveProject(p);
+    render();
+  });
+  $$("[data-cprog-days]").forEach(el=> el.onchange = ()=>{
+    const id = el.getAttribute("data-cprog-days");
+    const it = p.customProgramme.find(x=>String(x.id)===String(id));
+    if(!it) return;
+    it.days = Math.max(1, Number(el.value||1));
+    it.updatedAt = new Date().toISOString();
+    // Reflow subsequent non-manual sections
+    saveProject(p);
+    render();
+  });
+  $$("[data-cprog-start]").forEach(el=> el.onchange = ()=>{
+    const id = el.getAttribute("data-cprog-start");
+    const it = p.customProgramme.find(x=>String(x.id)===String(id));
+    if(!it) return;
+    const v = (el.value||"").trim();
+    it.startDate = v;
+    it.manualStart = !!v; // setting a date marks as manual
+    it.updatedAt = new Date().toISOString();
+    saveProject(p);
+    render();
+  });
+  $$("[data-cprog-toggle]").forEach(btn=> btn.onclick = ()=>{
+    const id = btn.getAttribute("data-cprog-toggle");
+    const it = p.customProgramme.find(x=>String(x.id)===String(id));
+    if(!it) return;
+    it.manualStart = !it.manualStart;
+    if(!it.manualStart) it.startDate = ""; // go back to auto
+    it.updatedAt = new Date().toISOString();
+    saveProject(p);
+    render();
+  });
+  $$("[data-cprog-del]").forEach(btn=> btn.onclick = ()=>{
+    const id = btn.getAttribute("data-cprog-del");
+    if(!confirm("Delete this programme section?")) return;
+    p.customProgramme = p.customProgramme.filter(x=>String(x.id)!==String(id));
+    saveProject(p);
+    render();
+  });
 }
 
 function programmeGantt(tasks, projectId){
@@ -3584,21 +3776,85 @@ render(); try{renderDeletedProjectsUI();}catch(e){}
   }
   
   if(tab==="programme"){
-    $("#progTpl") && ($("#progTpl").value = (p.programmeTemplateKey || "standard_nz"));
-    $("#progCx") && ($("#progCx").value = (p.programmeComplexity || "Moderate"));
-    $("#progGen") && ($("#progGen").onclick = ()=>{
-      const tpl = $("#progTpl").value;
-      const cx = $("#progCx").value;
-      const sd = $("#progStart").value;
-      p.programmeStartDate = sd || p.programmeStartDate || fmtISO(new Date());
-      generateProgrammeForProject(p, { templateKey: tpl, complexity: cx });
-      render(); try{renderDeletedProjectsUI();}catch(e){}
-    try{
-      const lu = document.getElementById('lastUpdateStamp');
-      if(lu) lu.textContent = getLastUpdateStamp();
-    }catch(e){}
+    ensureCustomProgramme(p);
 
-    });
+    // Set initial control values
+    if($("#progMode")) $("#progMode").value = (p.programmeMode || "template");
+    if($("#progStart")) $("#progStart").value = (p.programmeStartDate || fmtISO(new Date()));
+    if($("#progTpl")) $("#progTpl").value = (p.programmeTemplateKey || "standard_nz");
+    if($("#progCx")) $("#progCx").value = (p.programmeComplexity || "Moderate");
+
+    const refreshProgrammeUI = ()=>{
+      const mode = ($("#progMode") ? $("#progMode").value : (p.programmeMode || "template"));
+      const tplOn = mode === "template";
+      const tpl1 = document.getElementById("tplControls");
+      const tpl2 = document.getElementById("tplControls2");
+      const gen = document.getElementById("progGen");
+      const cc = document.getElementById("customControls");
+      const ed = document.getElementById("customEditor");
+      if(tpl1) tpl1.style.display = tplOn ? "" : "none";
+      if(tpl2) tpl2.style.display = tplOn ? "" : "none";
+      if(gen) gen.style.display = tplOn ? "" : "none";
+      if(cc) cc.style.display = tplOn ? "none" : "";
+      if(ed) ed.style.display = tplOn ? "none" : "";
+      if(!tplOn) renderCustomProgrammeEditor(p);
+    };
+
+    if($("#progMode")) $("#progMode").onchange = ()=>{
+      p.programmeMode = $("#progMode").value;
+      saveProject(p);
+      render();
+    };
+
+    if($("#progStart")) $("#progStart").onchange = ()=>{
+      p.programmeStartDate = ($("#progStart").value || fmtISO(new Date()));
+      saveProject(p);
+      render();
+    };
+
+    if($("#progGen")) $("#progGen").onclick = ()=>{
+      const tpl = $("#progTpl") ? $("#progTpl").value : "standard_nz";
+      const cx = $("#progCx") ? $("#progCx").value : "Moderate";
+      const sd = $("#progStart") ? $("#progStart").value : fmtISO(new Date());
+      p.programmeStartDate = sd || fmtISO(new Date());
+      p.programmeMode = "template";
+      p.programmeTemplateKey = tpl;
+      p.programmeComplexity = cx;
+      generateProgrammeForProject(p, { templateKey: tpl, complexity: cx });
+      saveProject(p);
+      render();
+    };
+
+    if($("#customAddSection")) $("#customAddSection").onclick = ()=>{
+      ensureCustomProgramme(p);
+      p.programmeMode = "custom";
+      p.customProgramme.push({
+        id: uid(),
+        title: "Section",
+        days: 3,
+        startDate: "",
+        manualStart: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      saveProject(p);
+      render();
+    };
+
+    if($("#customAutoFix")) $("#customAutoFix").onclick = ()=>{
+      ensureCustomProgramme(p);
+      // Clear auto sections so they follow consecutively again
+      p.customProgramme = (p.customProgramme||[]).map(s=>{
+        const ns = { ...s };
+        if(!ns.manualStart) ns.startDate = "";
+        ns.updatedAt = new Date().toISOString();
+        return ns;
+      });
+      saveProject(p);
+      render();
+    };
+
+    refreshProgrammeUI();
   }
 if(tab==="variations"){
     $("#addVarProj").onclick = ()=> openVariationForm({ projectId:p.id });
