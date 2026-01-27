@@ -5860,15 +5860,31 @@ function formatLastSync(){
 function mergeById(local = [], remote = []){
   const map = new Map();
   (local || []).forEach(item => { if(item && item.id) map.set(item.id, item); });
+
   (remote || []).forEach(item => {
     if(!item || !item.id) return;
     const existing = map.get(item.id);
-    if(!existing){ map.set(item.id, item); return; }
+
+    // If either side is a tombstone, prefer the tombstone (prevents resurrection from clock skew)
+    if(existing && existing.deletedAt && !item.deletedAt){
+      map.set(item.id, existing);
+      return;
+    }
+    if(item.deletedAt){
+      map.set(item.id, item);
+      return;
+    }
+
+    if(!existing){
+      map.set(item.id, item);
+      return;
+    }
+
     const lt = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
     const rt = new Date(item.updatedAt || item.createdAt || 0).getTime();
-    if(item.deletedAt){ map.set(item.id, item); return; }
     map.set(item.id, rt > lt ? item : existing);
   });
+
   return Array.from(map.values());
 }
 
@@ -5919,26 +5935,26 @@ function _applySyncedSettings(s){
 
 function _buildSyncPayload(){
   return {
-    Projects: aliveArr(state.projects),
-    Tasks: aliveArr(state.tasks),
-    Diary: aliveArr(state.diary),
-    Variations: aliveArr(state.variations),
-    Deliveries: aliveArr(state.deliveries),
-    Inspections: aliveArr(state.inspections),
-    Leads: aliveArr(state.leads),
-    Subbies: aliveArr(state.subbies),
-    ProgrammeTasks: aliveArr(state.programmeTasks),
-    ProgrammeHistoryStats: aliveArr(state.programmeHistoryStats),
-    Equipment: aliveArr(state.equipment),
-    EquipmentLogs: aliveArr(state.equipmentLogs),
-    Fleet: aliveArr(state.fleet),
-    FleetLogs: aliveArr(state.fleetLogs),
-    HSProfiles: aliveArr(state.hsProfiles),
-    HSInductions: aliveArr(state.hsInductions),
-    HSHazards: aliveArr(state.hsHazards),
-    HSToolboxes: aliveArr(state.hsToolboxes),
-    HSIncidents: aliveArr(state.hsIncidents),
-    ActivityLog: aliveArr(state.activityLog),
+    Projects: (state.projects||[]),
+    Tasks: (state.tasks||[]),
+    Diary: (state.diary||[]),
+    Variations: (state.variations||[]),
+    Deliveries: (state.deliveries||[]),
+    Inspections: (state.inspections||[]),
+    Leads: (state.leads||[]),
+    Subbies: (state.subbies||[]),
+    ProgrammeTasks: (state.programmeTasks||[]),
+    ProgrammeHistoryStats: (state.programmeHistoryStats||[]),
+    Equipment: (state.equipment||[]),
+    EquipmentLogs: (state.equipmentLogs||[]),
+    Fleet: (state.fleet||[]),
+    FleetLogs: (state.fleetLogs||[]),
+    HSProfiles: (state.hsProfiles||[]),
+    HSInductions: (state.hsInductions||[]),
+    HSHazards: (state.hsHazards||[]),
+    HSToolboxes: (state.hsToolboxes||[]),
+    HSIncidents: (state.hsIncidents||[]),
+    ActivityLog: (state.activityLog||[]),
     Settings: _cleanSettingsForSync()
   };
 }
