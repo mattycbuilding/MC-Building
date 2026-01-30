@@ -1,6 +1,6 @@
 
 
-const BUILD_ID = "mcb-build-20260130-2215";
+const BUILD_ID = "mcb-build-20260130-WorkerKioskKeypad";
 
 // === HARDWIRED SYNC CONFIG (loaded from sync-config.js) ===
 const __SYNC_CFG = (typeof window !== "undefined" && window.SYNC_CONFIG) ? window.SYNC_CONFIG : {};
@@ -1877,26 +1877,21 @@ function openWorkerPicker(opts={}){
     const badge = w.isAdmin ? `<span class="badge">Admin</span>` : ``;
     const blocked = w.blocked ? `<span class="badge danger">Blocked</span>` : ``;
     return `
-      <button class="listItem" type="button" data-worker-pick="${escapeAttr(w.id)}" ${w.blocked ? "disabled":""}>
-        <div class="row space">
-          <div>
-            <div class="row" style="gap:8px; align-items:center"><b>${escapeHtml(w.name||"Worker")}</b>${badge}${blocked}</div>
-            <div class="sub">${w.blocked ? "Access blocked" : (w.isAdmin ? "Full access" : "Restricted access")}</div>
-          </div>
-          <div class="chev">›</div>
-        </div>
+      <button class="workerTile" type="button" data-worker-pick="${escapeAttr(w.id)}" ${w.blocked ? "disabled":""}>
+        <div class="name">${escapeHtml(w.name||"Worker")} ${badge} ${blocked}</div>
+        <div class="meta">${w.blocked ? "Access blocked" : (w.isAdmin ? "Full access" : "Restricted access")}</div>
       </button>
     `;
-  }).join("");
+}).join("");
 
-  openModal(`
+  openModalLocked(`
     <div class="row space">
       <h2>${opts.title || "Select worker"}</h2>
-      <button class="btn" id="closeModalBtn" type="button">Close</button>
+      
     </div>
     <div class="sub" style="margin-top:6px">${workerModeEnabled() ? "Worker mode is ON." : "Worker mode is OFF."}</div>
     ${requirePin ? `<div class="smallmuted" style="margin-top:6px">PIN required (if set for the profile).</div>` : ``}
-    <div class="list" style="margin-top:10px">${rows || `<div class="sub">No workers yet. Add one in Settings → Worker profiles.</div>`}</div>
+    <div class="workerTileGrid">${rows || `<div class="sub">No workers yet. Add one in Profile Setup.</div>`}</div>
   `);
 
   const modal = document.getElementById("modal");
@@ -1913,7 +1908,7 @@ function openWorkerPicker(opts={}){
         if(requirePin){
           // Profile Setup must ALWAYS require the Master PIN (even if its pinHash was overwritten by sync)
           if(String(w.id||"")===PROFILE_SETUP_ID || w.isSetup){
-            const pin = prompt(`Enter Master PIN to use ${w.name}`);
+                      const pin = await promptPinPadModal({ title: "Enter Master PIN", subtitle: "13 digits required", expectedLen: 13, allowCancel: true });
             if(pin === null) return;
             if(!String(pin).trim()){ alert("PIN is required."); return; }
             const ok = await verifyWorkerMasterPin(pin);
@@ -1921,12 +1916,12 @@ function openWorkerPicker(opts={}){
           }
           // If global/master PIN is enabled, use it for all worker selection.
           else if(settings.workerMode && settings.workerMode.globalPin){
-            const pin = prompt(`Enter Master PIN to use ${w.name}`);
+                      const pin = await promptPinPadModal({ title: "Enter Master PIN", subtitle: "13 digits required", expectedLen: 13, allowCancel: true });
             if(pin === null) return;
             const ok = await verifyWorkerMasterPin(pin);
             if(!ok){ alert("Incorrect PIN."); return; }
           }else if((w.pinHash||"").trim()){
-            const pin = prompt(`Enter PIN for ${w.name}`);
+                        const pin = await promptPinPadModal({ title: `Enter PIN for ${w.name}`, subtitle: "4 digits required", expectedLen: 4, allowCancel: true });
             if(pin === null) return;
             if(!String(pin).trim()){ alert("PIN is required."); return; }
             const ok = await verifyWorkerPin(w, pin);
@@ -1954,7 +1949,7 @@ async function verifyWorkerModeDeactivationPin(){
     .map(w=>w.pinHash);
 
   if(adminHashes.length){
-    const pin = prompt("Enter ADMIN PIN to disable Worker mode");
+        const pin = await promptPinPadModal({ title: "Enter Admin PIN", subtitle: "4 digits required", expectedLen: 4, allowCancel: true });
     if(pin === null) return false;
     const ph = await hashPin(String(pin).trim());
     const ok = adminHashes.some(h=>String(h||"").trim() === ph);
@@ -1965,7 +1960,7 @@ async function verifyWorkerModeDeactivationPin(){
   // Fallback: if the current worker is an Admin with a PIN set, allow that.
   const cw = currentWorker();
   if(cw && cw.isAdmin && String(cw.pinHash||"").trim()){
-    const pin = prompt(`Enter PIN for ${cw.name} to disable Worker mode`);
+        const pin = await promptPinPadModal({ title: `Enter PIN for ${cw.name}`, subtitle: "4 digits required", expectedLen: 4, allowCancel: true });
     if(pin === null) return false;
     const ok = await verifyWorkerPin(cw, pin);
     if(!ok) alert("Incorrect PIN.");
@@ -2503,6 +2498,74 @@ function openModal(html){
     if(e && e.target && e.target.id==="modalBack") closeModal();
   };
 }
+
+function openModalLocked(html){
+  openModal(html);
+  // Disable backdrop close + remove close buttons if present
+  const mb = document.getElementById("modalBack");
+  if(mb) mb.onclick = null;
+  const closeBtn = document.getElementById("closeModalBtn");
+  if(closeBtn) closeBtn.remove();
+  const cancelBtn = document.getElementById("cancelModalBtn");
+  if(cancelBtn) cancelBtn.remove();
+}
+
+// Banking-style on-screen PIN pad (no OS keyboard)
+function promptPinPadModal({ title="Enter PIN", subtitle="", expectedLen=4, allowCancel=true } = {}){
+  return new Promise((resolve)=>{
+    let pin = "";
+    const dots = ()=> "●".repeat(pin.length) + "○".repeat(Math.max(0, expectedLen - pin.length));
+    const renderDots = ()=>{ const el=document.getElementById("pinDots"); if(el) el.textContent = dots(); };
+    const finish = ()=>{ const v=pin; closeModal(); resolve(v); };
+
+    const keys = [1,2,3,4,5,6,7,8,9,"clr",0,"bk"];
+    const keyHtml = keys.map(k=>{
+      if(k==="bk") return `<button class="pinKey" type="button" data-pin-key="bk">⌫</button>`;
+      if(k==="clr") return `<button class="pinKey ghost" type="button" data-pin-key="clr">Clear</button>`;
+      return `<button class="pinKey" type="button" data-pin-key="${k}">${k}</button>`;
+    }).join("");
+
+    openModalLocked(`
+      <div class="pinPadWrap">
+        <div class="row space" style="align-items:flex-start">
+          <div>
+            <h2 style="margin:0">${escapeHtml(title)}</h2>
+            ${subtitle ? `<div class="sub" style="margin-top:6px">${subtitle}</div>` : ``}
+          </div>
+          ${allowCancel ? `<button class="btn" id="pinCancelBtn" type="button">Cancel</button>` : ``}
+        </div>
+        <div id="pinDots" class="pinDots" aria-label="PIN">${dots()}</div>
+        <div class="pinGrid">${keyHtml}</div>
+      </div>
+    `);
+
+    const cancelBtn = document.getElementById("pinCancelBtn");
+    if(cancelBtn) cancelBtn.onclick = ()=>{ closeModal(); resolve(null); };
+
+    document.querySelectorAll("[data-pin-key]").forEach(btn=>{
+      btn.onclick = ()=>{
+        const k = btn.getAttribute("data-pin-key");
+        if(k==="bk"){
+          pin = pin.slice(0,-1);
+          renderDots();
+          return;
+        }
+        if(k==="clr"){
+          pin = "";
+          renderDots();
+          return;
+        }
+        if(!/^\d$/.test(k)) return;
+        if(pin.length >= expectedLen) return;
+        pin += k;
+        renderDots();
+        if(pin.length === expectedLen) finish();
+      };
+    });
+  });
+}
+
+
 
 $("#modalBack").addEventListener("click", (e)=>{
   if(e.target.id === "modalBack") closeModal();
