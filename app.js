@@ -1,6 +1,6 @@
 
 
-const BUILD_ID = "mcb-build-20260131051639-programme-totask-seed";
+const BUILD_ID = "mcb-build-20260202053851-hnry-safe";
 
 // === HARDWIRED SYNC CONFIG (loaded from sync-config.js) ===
 const __SYNC_CFG = (typeof window !== "undefined" && window.SYNC_CONFIG) ? window.SYNC_CONFIG : {};
@@ -6039,7 +6039,7 @@ ${projects.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join
   const hnryBtn = document.getElementById("hnryExport");
   if(hnryBtn){
     hnryBtn.onclick = () => {
-      runHnryDiaryExportSimple(
+      runHnryExportUI(
         document.getElementById("r_project").value,
         document.getElementById("r_from").value,
         document.getElementById("r_to").value
@@ -7557,7 +7557,7 @@ function formatDateNZ(iso){
   return `${d}/${m}/${y}`;
 }
 
-function runHnryDiaryExportSimple(projectId, from, to){
+function runHnryExportUI(projectId, from, to){
   const rangeFrom = from || new Date(Date.now()-7*86400000).toISOString().slice(0,10);
   const rangeTo   = to   || new Date().toISOString().slice(0,10);
 
